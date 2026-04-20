@@ -1,0 +1,31 @@
+# ============================================================
+# requirements.txt
+# Project : AI-Based Anomaly Detection System for Cloud Resource Monitoring
+# Org     : NTPL Digital Private Limited, Noida
+# Group   : CU - MCA - Group-4
+# ============================================================
+# Install with:  pip install -r requirements.txt
+
+# ── System metrics collection (agent) ───────────────────────
+psutil==5.9.8
+
+# ── AI / ML ─────────────────────────────────────────────────
+scikit-learn==1.4.2
+numpy==1.26.4
+pandas==2.2.2
+joblib==1.4.2
+matplotlib==3.9.0
+seaborn==0.13.2
+
+# ── Web Framework ────────────────────────────────────────────
+flask==3.0.3
+flask-cors==4.0.1
+
+# ── HTTP client (agent → API) ────────────────────────────────
+requests==2.32.3
+
+# ── Scheduling (agent loop) ──────────────────────────────────
+schedule==1.2.2
+
+# ── Optional: Jupyter for exploratory analysis ───────────────
+# jupyter==1.0.0

@@ -1,0 +1,90 @@
+# ============================================================
+# .gitignore
+# Project : AI-Based Anomaly Detection System
+# Org     : NTPL Digital Private Limited, Noida
+# Group   : CU - MCA - Group-4
+# ============================================================
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.whl
+
+# ── Virtual Environment ──────────────────────────────────────
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# ── Environment / Secrets ────────────────────────────────────
+.env
+*.env
+*.env.local
+*.env.production
+
+# ── Database ─────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+backend/anomaly_detection.db
+
+# ── ML Model / Scaler (generated at runtime) ─────────────────
+*.joblib
+*.pkl
+*.pickle
+backend/isolation_forest.joblib
+backend/scaler.joblib
+
+# ── Logs ─────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+
+# ── OS Files ─────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── IDE / Editor ─────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── Jupyter Notebooks ────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Coverage / Testing ───────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# ── Distribution ─────────────────────────────────────────────
+*.tar.gz
+*.zip
+
+# ── Misc ─────────────────────────────────────────────────────
+tmp/
+temp/
+.tmp/

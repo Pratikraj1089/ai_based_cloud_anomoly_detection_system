@@ -478,40 +478,348 @@ function safeParseJSON(str) {
     try { return JSON.parse(str); } catch { return null; }
 }
 
+// ─── Remote Servers Logic ─────────────────────────────────────────────────────
+
+let storedServers = [];
+
+// Remote monitoring state -- password kept ONLY in JS memory, never stored
+const remote = {
+    active:      false,
+    serverId:    null,
+    serverName:  null,
+    serverIP:    null,
+    password:    null,      // cleared on disconnect
+    pollTimer:   null,
+    lastNetRx:   null,      // for per-interval rate calculation
+    lastNetTx:   null,
+    lastPollTs:  null,
+};
+
+async function loadServers() {
+    try {
+        const res = await apiFetch("/api/servers");
+        if (res.success && res.data) {
+            storedServers = res.data;
+            renderServerList();
+        }
+    } catch (err) { console.warn("Failed to load servers", err); }
+}
+
+async function loadServers() {
+    try {
+        const res = await apiFetch("/api/servers");
+        if (res.success && res.data) {
+            storedServers = res.data;
+            renderServerList();
+        }
+    } catch (err) { console.warn("Failed to load servers", err); }
+}
+
+function renderServerList() {
+    const container = el("serverListContainer");
+    if (!container) return;
+
+    document.querySelectorAll(".dyn-server-btn").forEach(btn => btn.remove());
+
+    const addBtn = el("btnAddServer");
+    storedServers.forEach(srv => {
+        const btn = document.createElement("button");
+        // Highlight the currently monitored server
+        const isActive = remote.active && remote.serverId === srv.id;
+        btn.className = "cloud-btn dyn-server-btn" + (isActive ? " active" : "");
+        btn.id = "srvBtn" + srv.id;
+        btn.title = srv.ip + ":" + (srv.port || 22);
+        btn.innerHTML = `<span class="cloud-icon">🖥️</span> ${srv.name}` +
+            (isActive ? ` <span class="badge">Live</span>` : "");
+        btn.onclick = () => {
+            // If already monitoring this server, just show a toast
+            if (remote.active && remote.serverId === srv.id) {
+                showToast(`Already monitoring ${srv.name}`, "warning");
+                return;
+            }
+            el("connServerId").value = srv.id;
+            el("connServerName").textContent = `${srv.name}  (${srv.ip})`;
+            el("connPassword").value = "";
+            el("passwordModal").classList.add("open");
+            // Focus the password field
+            setTimeout(() => el("connPassword")?.focus(), 100);
+        };
+        container.insertBefore(btn, addBtn);
+    });
+}
+
+// ─── Continuous remote monitoring ───────────────────────────────────────────
+
+function startRemoteMonitoring(serverId, serverName, password) {
+    // Stop local polling first
+    clearInterval(state.polling);
+    state.polling = null;
+
+    // Stop any existing remote polling
+    if (remote.pollTimer) clearInterval(remote.pollTimer);
+
+    // Store session state (password in memory only)
+    remote.active     = true;
+    remote.serverId   = serverId;
+    remote.serverName = serverName;
+    remote.password   = password;
+    remote.lastNetRx  = null;
+    remote.lastNetTx  = null;
+    remote.lastPollTs = null;
+
+    // Show disconnect banner
+    showRemoteBanner(serverName);
+    // Highlight active button
+    renderServerList();
+
+    // Immediate first fetch, then repeat
+    pollRemoteServer();
+    remote.pollTimer = setInterval(pollRemoteServer, CONFIG.pollInterval);
+}
+
+async function pollRemoteServer() {
+    if (!remote.active) return;
+    try {
+        const res = await apiFetch("/api/server/connect", {
+            method: "POST",
+            body: JSON.stringify({
+                server_id: remote.serverId,
+                password:  remote.password,
+            }),
+        });
+
+        if (!res.success) {
+            showToast("Remote poll failed: " + (res.error || "unknown"), "error");
+            return;
+        }
+
+        const now = Date.now();
+        const m   = res.metrics;
+
+        // Calculate network rate (bytes/s) from cumulative /proc/net/dev counters
+        let netIn = 0, netOut = 0;
+        if (remote.lastNetRx !== null && remote.lastPollTs !== null) {
+            const dtSec = (now - remote.lastPollTs) / 1000;
+            netIn  = Math.max(0, (res.net_rx_bytes - remote.lastNetRx) / dtSec);
+            netOut = Math.max(0, (res.net_tx_bytes - remote.lastNetTx) / dtSec);
+        }
+        remote.lastNetRx  = res.net_rx_bytes;
+        remote.lastNetTx  = res.net_tx_bytes;
+        remote.lastPollTs = now;
+
+        // Build full metric object with calculated network rates
+        const fullMetric = {
+            ...m,
+            network_in:  netIn,
+            network_out: netOut,
+        };
+
+        // Push to all charts
+        const label = formatTime(m.timestamp);
+        pushToChart("chartCPU",    label, m.cpu);
+        pushToChart("chartRAM",    label, m.ram);
+        pushToChart("chartDisk",   label, m.disk);
+        pushToChart("chartNetIn",  label, netIn);
+        pushToChart("chartNetOut", label, netOut);
+        pushToChart("chartProcs",  label, m.processes);
+        Object.values(charts).forEach(ch => ch.update("none"));
+
+        // Update stat cards
+        updateStatCards(fullMetric);
+
+        // Update header server info
+        const sn = el("headerServerName");
+        const si = el("headerServerIP");
+        if (sn) sn.textContent = res.server_name;
+        if (si) si.textContent = res.server_ip;
+        const lu = el("lastUpdated");
+        if (lu) lu.textContent = "Updated: " + formatTime(m.timestamp);
+
+        // Update status badge
+        const is_anomaly = res.prediction.is_anomaly;
+        const s = is_anomaly ? "anomaly" : "normal";
+        const badge = el("statusBadge");
+        const text  = el("statusText");
+        if (badge) badge.className = `status-badge ${s}`;
+        if (text)  text.textContent = `Remote • ${s.charAt(0).toUpperCase() + s.slice(1)}`;
+
+        if (is_anomaly) {
+            document.body.classList.add("anomaly-flash");
+            setTimeout(() => document.body.classList.remove("anomaly-flash"), 1200);
+        }
+
+    } catch (err) {
+        showToast("Remote poll error: " + err.message, "error");
+        console.error("pollRemoteServer:", err);
+    }
+}
+
+function disconnectRemote() {
+    // Clear credentials from memory
+    clearInterval(remote.pollTimer);
+    remote.active     = false;
+    remote.serverId   = null;
+    remote.serverName = null;
+    remote.password   = null;   // wipe password
+    remote.lastNetRx  = null;
+    remote.lastNetTx  = null;
+    remote.pollTimer  = null;
+
+    // Hide disconnect banner
+    hideRemoteBanner();
+    renderServerList();
+
+    // Reset header to local server
+    const sn = el("headerServerName");
+    const si = el("headerServerIP");
+    if (sn) sn.textContent = "Local";
+    if (si) si.textContent = "";
+
+    // Resume local polling
+    fetchAll();
+    state.polling = setInterval(fetchAll, CONFIG.pollInterval);
+    showToast("Disconnected. Resumed local monitoring.", "success");
+}
+
+// Remote banner (shown in header when a VPS is being monitored)
+function showRemoteBanner(name) {
+    let banner = el("remoteBanner");
+    if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "remoteBanner";
+        banner.style.cssText = [
+            "display:flex","align-items:center","gap:10px",
+            "padding:6px 16px",
+            "background:rgba(59,130,246,0.15)",
+            "border:1px solid rgba(59,130,246,0.35)",
+            "border-radius:999px",
+            "font-size:0.82rem",
+            "font-weight:600",
+            "color:#93c5fd",
+            "margin:0 8px",
+        ].join(";");
+        // Insert after header
+        const header = document.querySelector(".header");
+        if (header) header.insertAdjacentElement("afterend", banner);
+    }
+    banner.innerHTML =
+        `<span style="animation:pulse-dot 2s infinite;display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6"></span>` +
+        `Monitoring <strong style="color:#f1f5f9;margin:0 4px">${name}</strong> via SSH` +
+        `<button onclick="disconnectRemote()" style="margin-left:12px;padding:3px 10px;border:1px solid rgba(239,68,68,0.4);` +
+        `border-radius:999px;background:rgba(239,68,68,0.15);color:#f87171;cursor:pointer;font-size:0.75rem;font-family:inherit">` +
+        `Disconnect</button>`;
+    banner.style.display = "flex";
+}
+
+function hideRemoteBanner() {
+    const banner = el("remoteBanner");
+    if (banner) banner.style.display = "none";
+}
+
+// ─── Form handlers ───────────────────────────────────────────────────────────
+
+function handleAddServerSubmit(e) {
+    e.preventDefault();
+    const btn = el("addServerSubmitBtn");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Saving...';
+
+    const payload = {
+        name:     el("asName").value.trim(),
+        ip:       el("asIP").value.trim(),
+        port:     parseInt(el("asPort").value || "22"),
+        username: el("asUser").value.trim(),
+    };
+
+    apiFetch("/api/servers", { method: "POST", body: JSON.stringify(payload) })
+        .then(res => {
+            if (res.success) {
+                showToast(`Server '${payload.name}' added!`);
+                el("addServerModal").classList.remove("open");
+                el("addServerForm").reset();
+                loadServers();
+            } else {
+                showToast(res.error || "Failed to add server", "error");
+            }
+        })
+        .catch(err => showToast("Error: " + err.message, "error"))
+        .finally(() => { btn.disabled = false; btn.innerHTML = "Save Server"; });
+}
+
+function handlePasswordSubmit(e) {
+    e.preventDefault();
+    const btn      = el("passwordSubmitBtn");
+    const serverId = parseInt(el("connServerId").value);
+    const password = el("connPassword").value;
+    const srv      = storedServers.find(s => s.id === serverId);
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Connecting...';
+
+    // Test connection with one fetch, then start continuous polling on success
+    apiFetch("/api/server/connect", {
+        method: "POST",
+        body: JSON.stringify({ server_id: serverId, password }),
+    })
+    .then(res => {
+        if (res.success) {
+            el("passwordModal").classList.remove("open");
+            showToast(`Connected to ${res.server_name}! Polling every 10s...`, "success");
+            // Hand off to continuous polling
+            startRemoteMonitoring(serverId, res.server_name, password);
+        } else {
+            showToast(res.error || "Connection failed", "error");
+        }
+    })
+    .catch(err => showToast("Connection error: " + err.message, "error"))
+    .finally(() => { btn.disabled = false; btn.innerHTML = "Connect"; });
+}
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     initAllCharts();
-
-    // Initial fetch
     fetchAll();
-
-    // Polling
     state.polling = setInterval(fetchAll, CONFIG.pollInterval);
 
-    // Retrain button
     el("retrainBtn")?.addEventListener("click", triggerRetrain);
 
-    // Modal close handlers
+    // Cloud-info modals
     el("modalCloseBtn")?.addEventListener("click", closeModal);
     el("modalCloseBtn2")?.addEventListener("click", closeModal);
     el("cloudModal")?.addEventListener("click", (e) => {
         if (e.target === el("cloudModal")) closeModal();
     });
-
-    // Cloud provider buttons
     document.querySelectorAll("[data-cloud]").forEach((btn) => {
         btn.addEventListener("click", () => {
-            const provider = btn.dataset.cloud;
-            if (provider === "vps") {
-                showToast("✅ VPS Agent is active and collecting data.", "success");
-            } else {
-                openModal(provider);
-            }
+            const p = btn.dataset.cloud;
+            if (p === "vps") showToast("✅ Local VPS Agent is active.", "success");
+            else openModal(p);
         });
     });
 
-    // Keyboard: Escape closes modal
+    // Add-server modal
+    el("btnAddServer")?.addEventListener("click", () =>
+        el("addServerModal").classList.add("open"));
+    el("addServerCloseBtn")?.addEventListener("click", () =>
+        el("addServerModal").classList.remove("open"));
+
+    // Password modal
+    el("passwordCloseBtn")?.addEventListener("click", () =>
+        el("passwordModal").classList.remove("open"));
+
+    // Form submissions
+    el("addServerForm")?.addEventListener("submit", handleAddServerSubmit);
+    el("passwordForm")?.addEventListener("submit", handlePasswordSubmit);
+
+    // Load saved servers into bar
+    loadServers();
+
+    // ESC closes any open modal
     document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeModal();
+        if (e.key === "Escape") {
+            closeModal();
+            el("addServerModal")?.classList.remove("open");
+            el("passwordModal")?.classList.remove("open");
+        }
     });
 });

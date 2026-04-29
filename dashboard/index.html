@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <!--
   ============================================================
@@ -14,15 +15,18 @@
 
   <!-- SEO -->
   <title>AI Anomaly Detection — Cloud Monitor | NTPL Digital</title>
-  <meta name="description" content="Real-time AI-powered cloud resource anomaly detection dashboard. Monitor CPU, RAM, Disk, and Network metrics with Isolation Forest ML model. By NTPL Digital & CU MCA Group-4." />
-  <meta name="keywords"    content="anomaly detection, cloud monitoring, AI, machine learning, isolation forest, VPS, NTPL Digital, MCA" />
-  <meta name="author"      content="NTPL Digital Private Limited — CU MCA Group-4" />
+  <meta name="description"
+    content="Real-time AI-powered cloud resource anomaly detection dashboard. Monitor CPU, RAM, Disk, and Network metrics with Isolation Forest ML model. By NTPL Digital & CU MCA Group-4." />
+  <meta name="keywords"
+    content="anomaly detection, cloud monitoring, AI, machine learning, isolation forest, VPS, NTPL Digital, MCA" />
+  <meta name="author" content="NTPL Digital Private Limited — CU MCA Group-4" />
 
   <!-- Prevent sensitive info being cached by proxies -->
   <meta http-equiv="Cache-Control" content="no-store" />
 
   <!-- Favicon emoji -->
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
 
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
@@ -30,376 +34,430 @@
   <!-- Styles -->
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
 
-<!-- ── Toast Container ────────────────────────────────────────────────────── -->
-<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <!-- ── Toast Container ────────────────────────────────────────────────────── -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
-<!-- ── API Error Banner ───────────────────────────────────────────────────── -->
-<div id="apiErrorBanner"
-     style="display:none;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);
+  <!-- ── API Error Banner ───────────────────────────────────────────────────── -->
+  <div id="apiErrorBanner" style="display:none;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);
             border-radius:8px;padding:10px 20px;text-align:center;color:#ef4444;
             margin:8px 16px;font-size:0.83rem;">
-  ⚠️ Cannot reach the API server. Make sure <code>backend/app.py</code> is running on port 5000.
-</div>
+    ⚠️ Cannot reach the API server. Make sure <code>backend/app.py</code> is running on port 5000.
+  </div>
 
-<!-- ── Cloud Provider Modal ───────────────────────────────────────────────── -->
-<div id="cloudModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-  <div class="modal">
-    <div class="modal-header">
-      <h2 id="modalTitle">Cloud Integration</h2>
-      <button id="modalCloseBtn" class="modal-close" aria-label="Close modal">✕</button>
-    </div>
-    <div id="modalBody" class="modal-body"></div>
-    <div style="margin-top:1.25rem;text-align:right;">
-      <button id="modalCloseBtn2" class="btn btn-primary">Got it</button>
+  <!-- ── Cloud Provider Modal ───────────────────────────────────────────────── -->
+  <div id="cloudModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Cloud Integration</h2>
+        <button id="modalCloseBtn" class="modal-close" aria-label="Close modal">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+      <div style="margin-top:1.25rem;text-align:right;">
+        <button id="modalCloseBtn2" class="btn btn-primary">Got it</button>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
-<!-- MAIN APP                                                                    -->
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
-<div id="app">
-
-  <!-- ── Header / Status Bar ──────────────────────────────────────────────── -->
-  <header class="header">
-    <div class="header-left">
-      <div class="logo" aria-hidden="true">🛡️</div>
-      <div class="header-title">
-        <h1>AI Cloud Anomaly Detection</h1>
-        <p>NTPL Digital Pvt Ltd — CU MCA Group-4 &nbsp;|&nbsp; Powered by Isolation Forest</p>
+  <!-- ── Add Server Modal ────────────────────────────────────────────────── -->
+  <div id="addServerModal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal" style="max-width: 400px;">
+      <div class="modal-header">
+        <h2>➕ Add VPS Server</h2>
+        <button id="addServerCloseBtn" class="modal-close" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="addServerForm" style="display:flex;flex-direction:column;gap:12px;">
+          <input type="text" id="asName" placeholder="Server Name (e.g. Prod DB)" required class="form-input" />
+          <input type="text" id="asIP" placeholder="IP Address" required class="form-input" />
+          <input type="number" id="asPort" placeholder="SSH Port (22)" value="22" required class="form-input" />
+          <input type="text" id="asUser" placeholder="SSH Username (e.g. root)" required class="form-input" />
+          <div style="margin-top:1.25rem;text-align:right;">
+            <button type="submit" class="btn btn-primary" id="addServerSubmitBtn">Save Server</button>
+          </div>
+        </form>
       </div>
     </div>
+  </div>
 
-    <div class="header-right">
-      <!-- Status Badge -->
-      <div id="statusBadge" class="status-badge starting" role="status" aria-live="polite">
-        <span id="statusDot" class="status-dot"></span>
-        <span id="statusText">Connecting…</span>
+  <!-- ── Password Prompt Modal ───────────────────────────────────────────── -->
+  <div id="passwordModal" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal" style="max-width: 400px;">
+      <div class="modal-header">
+        <h2>🔒 Connect to Server</h2>
+        <button id="passwordCloseBtn" class="modal-close" aria-label="Close modal">✕</button>
       </div>
-
-      <!-- Server Info -->
-      <div class="server-info">
-        <span class="server-name" id="headerServerName">Loading…</span>
-        <span class="server-ip"   id="headerServerIP">—</span>
-        <span class="last-updated" id="lastUpdated">—</span>
+      <div class="modal-body">
+        <p>Connecting to <strong id="connServerName">...</strong> requires SSH password.</p>
+        <form id="passwordForm" style="display:flex;flex-direction:column;gap:12px;margin-top:10px;">
+          <input type="hidden" id="connServerId" />
+          <input type="password" id="connPassword" placeholder="SSH Password" required class="form-input" />
+          <div style="margin-top:1.25rem;text-align:right;">
+            <button type="submit" class="btn btn-primary" id="passwordSubmitBtn">Connect</button>
+          </div>
+        </form>
       </div>
     </div>
-  </header>
+  </div>
 
-  <!-- ── Cloud Provider Selector ──────────────────────────────────────────── -->
-  <nav class="cloud-bar" aria-label="Cloud provider selection">
-    <span class="cloud-bar-label">Monitor:</span>
-    <div class="cloud-buttons">
-      <!-- VPS — Active -->
-      <button class="cloud-btn active" data-cloud="vps" id="btnVPS" title="VPS monitoring is active">
-        <span class="cloud-icon">🖥️</span>
-        VPS / Local
-        <span class="badge">Active</span>
-      </button>
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- MAIN APP                                                                    -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <div id="app">
 
-      <!-- AWS -->
-      <button class="cloud-btn coming-soon" data-cloud="aws" id="btnAWS" title="Click for AWS setup instructions">
-        <span class="cloud-icon">☁️</span>
-        AWS EC2
-        <span class="badge cs">Soon</span>
-      </button>
+    <!-- ── Header / Status Bar ──────────────────────────────────────────────── -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo" aria-hidden="true">🛡️</div>
+        <div class="header-title">
+          <h1>Smart Cloud Pulse AI Monitor</h1>
 
-      <!-- GCP -->
-      <button class="cloud-btn coming-soon" data-cloud="gcp" id="btnGCP" title="Click for GCP setup instructions">
-        <span class="cloud-icon">🌍</span>
-        GCP Compute
-        <span class="badge cs">Soon</span>
-      </button>
+        </div>
+      </div>
 
-      <!-- Azure -->
-      <button class="cloud-btn coming-soon" data-cloud="azure" id="btnAzure" title="Click for Azure setup instructions">
-        <span class="cloud-icon">🔷</span>
-        Azure VM
-        <span class="badge cs">Soon</span>
-      </button>
-    </div>
-  </nav>
+      <div class="header-right">
+        <!-- Status Badge -->
+        <div id="statusBadge" class="status-badge starting" role="status" aria-live="polite">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Connecting…</span>
+        </div>
 
-  <!-- ── Stat Cards ────────────────────────────────────────────────────────── -->
-  <section class="stats-grid" aria-label="Current system metrics">
+        <!-- Server Info -->
+        <div class="server-info">
+          <span class="server-name" id="headerServerName">Loading…</span>
+          <span class="server-ip" id="headerServerIP">—</span>
+          <span class="last-updated" id="lastUpdated">—</span>
+        </div>
+      </div>
+    </header>
 
-    <!-- CPU -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#3b82f6,#06b6d4);">
-      <div class="card-icon">💻</div>
-      <div class="card-label">CPU Usage</div>
-      <div class="card-value">
-        <span id="valCPU">—</span>
-      </div>
-      <div class="card-sub">Processor Load</div>
-      <div class="ring-container" aria-hidden="true">
-        <svg class="ring-svg" width="52" height="52" viewBox="0 0 52 52">
-          <circle class="ring-bg"   cx="26" cy="26" r="22"/>
-          <circle class="ring-fill" cx="26" cy="26" r="22" id="ringCPU"
-                  stroke="#3b82f6"
-                  style="stroke-dasharray:138.2;stroke-dashoffset:138.2;"/>
-        </svg>
-      </div>
-    </article>
+    <!-- ── Cloud Provider Selector ──────────────────────────────────────────── -->
+    <nav class="cloud-bar" aria-label="Cloud provider selection">
+      <span class="cloud-bar-label">Monitor:</span>
+      <div class="cloud-buttons">
+        <!-- VPS — Active -->
+        <button class="cloud-btn active" data-cloud="vps" id="btnVPS" title="VPS monitoring is active">
+          <span class="cloud-icon">🖥️</span>
+          VPS / Local
+          <span class="badge">Active</span>
+        </button>
 
-    <!-- RAM -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#8b5cf6,#3b82f6);">
-      <div class="card-icon">🧠</div>
-      <div class="card-label">RAM Usage</div>
-      <div class="card-value">
-        <span id="valRAM">—</span>
-      </div>
-      <div class="card-sub">Memory Load</div>
-      <div class="ring-container" aria-hidden="true">
-        <svg class="ring-svg" width="52" height="52" viewBox="0 0 52 52">
-          <circle class="ring-bg"   cx="26" cy="26" r="22"/>
-          <circle class="ring-fill" cx="26" cy="26" r="22" id="ringRAM"
-                  stroke="#8b5cf6"
-                  style="stroke-dasharray:138.2;stroke-dashoffset:138.2;"/>
-        </svg>
-      </div>
-    </article>
+        <!-- AWS -->
+        <button class="cloud-btn coming-soon" data-cloud="aws" id="btnAWS" title="Click for AWS setup instructions">
+          <span class="cloud-icon">☁️</span>
+          AWS EC2
+          <span class="badge cs">Soon</span>
+        </button>
 
-    <!-- Disk -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#06b6d4,#10b981);">
-      <div class="card-icon">💾</div>
-      <div class="card-label">Disk Usage</div>
-      <div class="card-value">
-        <span id="valDisk">—</span>
-      </div>
-      <div class="card-sub">Root Partition</div>
-      <div class="ring-container" aria-hidden="true">
-        <svg class="ring-svg" width="52" height="52" viewBox="0 0 52 52">
-          <circle class="ring-bg"   cx="26" cy="26" r="22"/>
-          <circle class="ring-fill" cx="26" cy="26" r="22" id="ringDisk"
-                  stroke="#06b6d4"
-                  style="stroke-dasharray:138.2;stroke-dashoffset:138.2;"/>
-        </svg>
-      </div>
-    </article>
+        <!-- GCP -->
+        <button class="cloud-btn coming-soon" data-cloud="gcp" id="btnGCP" title="Click for GCP setup instructions">
+          <span class="cloud-icon">🌍</span>
+          GCP Compute
+          <span class="badge cs">Soon</span>
+        </button>
 
-    <!-- Network In -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#10b981,#06b6d4);">
-      <div class="card-icon">📥</div>
-      <div class="card-label">Network In</div>
-      <div class="card-value" style="font-size:1.4rem;">
-        <span id="valNetIn">—</span>
+        <!-- Azure -->
+        <button class="cloud-btn coming-soon" data-cloud="azure" id="btnAzure"
+          title="Click for Azure setup instructions">
+          <span class="cloud-icon">🔷</span>
+          Azure VM
+          <span class="badge cs">Soon</span>
+        </button>
       </div>
-      <div class="card-sub">Inbound Rate</div>
-    </article>
+    </nav>
 
-    <!-- Network Out -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#f59e0b,#f97316);">
-      <div class="card-icon">📤</div>
-      <div class="card-label">Network Out</div>
-      <div class="card-value" style="font-size:1.4rem;">
-        <span id="valNetOut">—</span>
+    <!-- ── Saved Servers Selector ──────────────────────────────────────────── -->
+    <nav class="cloud-bar" aria-label="Saved Servers">
+      <span class="cloud-bar-label">My Servers:</span>
+      <div class="cloud-buttons" id="serverListContainer">
+        <!-- Dynamically populated servers will go here -->
+        <button class="cloud-btn" id="btnAddServer" style="border:1px dashed rgba(255,255,255,0.2);">
+          <span class="cloud-icon">➕</span>
+          Add VPS
+        </button>
       </div>
-      <div class="card-sub">Outbound Rate</div>
-    </article>
+    </nav>
 
-    <!-- Processes -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#f97316,#ef4444);">
-      <div class="card-icon">⚙️</div>
-      <div class="card-label">Processes</div>
-      <div class="card-value">
-        <span id="valProcs">—</span>
-      </div>
-      <div class="card-sub">Running Procs</div>
-    </article>
+    <!-- ── Stat Cards ────────────────────────────────────────────────────────── -->
+    <section class="stats-grid" aria-label="Current system metrics">
 
-    <!-- Uptime -->
-    <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#6366f1,#8b5cf6);">
-      <div class="card-icon">⏱️</div>
-      <div class="card-label">Uptime</div>
-      <div class="card-value" style="font-size:1.3rem;">
-        <span id="valUptime">—</span>
-      </div>
-      <div class="card-sub">Since Last Boot</div>
-    </article>
+      <!-- CPU -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#3b82f6,#06b6d4);">
+        <div class="card-icon">💻</div>
+        <div class="card-label">CPU Usage</div>
+        <div class="card-value">
+          <span id="valCPU">—</span>
+        </div>
+        <div class="card-sub">Processor Load</div>
+        <div class="ring-container" aria-hidden="true">
+          <svg class="ring-svg" width="52" height="52" viewBox="0 0 52 52">
+            <circle class="ring-bg" cx="26" cy="26" r="22" />
+            <circle class="ring-fill" cx="26" cy="26" r="22" id="ringCPU" stroke="#3b82f6"
+              style="stroke-dasharray:138.2;stroke-dashoffset:138.2;" />
+          </svg>
+        </div>
+      </article>
 
-  </section>
+      <!-- RAM -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#8b5cf6,#3b82f6);">
+        <div class="card-icon">🧠</div>
+        <div class="card-label">RAM Usage</div>
+        <div class="card-value">
+          <span id="valRAM">—</span>
+        </div>
+        <div class="card-sub">Memory Load</div>
+        <div class="ring-container" aria-hidden="true">
+          <svg class="ring-svg" width="52" height="52" viewBox="0 0 52 52">
+            <circle class="ring-bg" cx="26" cy="26" r="22" />
+            <circle class="ring-fill" cx="26" cy="26" r="22" id="ringRAM" stroke="#8b5cf6"
+              style="stroke-dasharray:138.2;stroke-dashoffset:138.2;" />
+          </svg>
+        </div>
+      </article>
 
-  <!-- ── Charts Grid ────────────────────────────────────────────────────────── -->
-  <section class="charts-grid" aria-label="Live metric charts">
+      <!-- Disk -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#06b6d4,#10b981);">
+        <div class="card-icon">💾</div>
+        <div class="card-label">Disk Usage</div>
+        <div class="card-value">
+          <span id="valDisk">—</span>
+        </div>
+        <div class="card-sub">Root Partition</div>
+        <div class="ring-container" aria-hidden="true">
+          <svg class="ring-svg" width="52" height="52" viewBox="0 0 52 52">
+            <circle class="ring-bg" cx="26" cy="26" r="22" />
+            <circle class="ring-fill" cx="26" cy="26" r="22" id="ringDisk" stroke="#06b6d4"
+              style="stroke-dasharray:138.2;stroke-dashoffset:138.2;" />
+          </svg>
+        </div>
+      </article>
 
-    <!-- CPU Chart -->
-    <div class="chart-card">
-      <div class="chart-header">
-        <h3>💻 CPU Usage</h3>
-        <span class="chart-val" id="liveCPU">—</span>
-      </div>
-      <div class="chart-canvas-wrap">
-        <canvas id="chartCPU" aria-label="CPU usage over time"></canvas>
-      </div>
-    </div>
+      <!-- Network In -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#10b981,#06b6d4);">
+        <div class="card-icon">📥</div>
+        <div class="card-label">Network In</div>
+        <div class="card-value" style="font-size:1.4rem;">
+          <span id="valNetIn">—</span>
+        </div>
+        <div class="card-sub">Inbound Rate</div>
+      </article>
 
-    <!-- RAM Chart -->
-    <div class="chart-card">
-      <div class="chart-header">
-        <h3>🧠 RAM Usage</h3>
-        <span class="chart-val" id="liveRAM">—</span>
-      </div>
-      <div class="chart-canvas-wrap">
-        <canvas id="chartRAM" aria-label="RAM usage over time"></canvas>
-      </div>
-    </div>
+      <!-- Network Out -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#f59e0b,#f97316);">
+        <div class="card-icon">📤</div>
+        <div class="card-label">Network Out</div>
+        <div class="card-value" style="font-size:1.4rem;">
+          <span id="valNetOut">—</span>
+        </div>
+        <div class="card-sub">Outbound Rate</div>
+      </article>
 
-    <!-- Disk Chart -->
-    <div class="chart-card">
-      <div class="chart-header">
-        <h3>💾 Disk Usage</h3>
-        <span class="chart-val" id="liveDisk">—</span>
-      </div>
-      <div class="chart-canvas-wrap">
-        <canvas id="chartDisk" aria-label="Disk usage over time"></canvas>
-      </div>
-    </div>
+      <!-- Processes -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#f97316,#ef4444);">
+        <div class="card-icon">⚙️</div>
+        <div class="card-label">Processes</div>
+        <div class="card-value">
+          <span id="valProcs">—</span>
+        </div>
+        <div class="card-sub">Running Procs</div>
+      </article>
 
-    <!-- Network In Chart -->
-    <div class="chart-card">
-      <div class="chart-header">
-        <h3>📥 Network In</h3>
-        <span class="chart-val" id="liveNetIn">—</span>
-      </div>
-      <div class="chart-canvas-wrap">
-        <canvas id="chartNetIn" aria-label="Inbound network rate over time"></canvas>
-      </div>
-    </div>
+      <!-- Uptime -->
+      <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#6366f1,#8b5cf6);">
+        <div class="card-icon">⏱️</div>
+        <div class="card-label">Uptime</div>
+        <div class="card-value" style="font-size:1.3rem;">
+          <span id="valUptime">—</span>
+        </div>
+        <div class="card-sub">Since Last Boot</div>
+      </article>
 
-    <!-- Network Out Chart -->
-    <div class="chart-card">
-      <div class="chart-header">
-        <h3>📤 Network Out</h3>
-        <span class="chart-val" id="liveNetOut">—</span>
-      </div>
-      <div class="chart-canvas-wrap">
-        <canvas id="chartNetOut" aria-label="Outbound network rate over time"></canvas>
-      </div>
-    </div>
-
-    <!-- Processes Chart -->
-    <div class="chart-card">
-      <div class="chart-header">
-        <h3>⚙️ Processes</h3>
-        <span class="chart-val" id="liveProcs">—</span>
-      </div>
-      <div class="chart-canvas-wrap">
-        <canvas id="chartProcs" aria-label="Running process count over time"></canvas>
-      </div>
-    </div>
-
-  </section>
-
-  <!-- ── Bottom Grid: Anomaly Table + Model Panel ───────────────────────────── -->
-  <div class="bottom-grid">
-
-    <!-- Anomaly History Table -->
-    <section class="glass-card" aria-label="Anomaly history">
-      <div class="card-title">
-        <span class="icon">🚨</span>
-        Anomaly Log
-        <span style="margin-left:auto;font-size:0.8rem;font-weight:500;color:var(--accent-red);"
-              id="anomalyCount">0</span> detected
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>CPU</th>
-              <th>RAM</th>
-              <th>Score</th>
-              <th>Severity</th>
-            </tr>
-          </thead>
-          <tbody id="anomalyTbody">
-            <tr><td colspan="5" class="no-data">Waiting for data…</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
-    <!-- Model Status + Retrain -->
-    <section class="glass-card" aria-label="AI model status">
-      <div class="card-title">
-        <span class="icon">🤖</span>
-        AI Model — Isolation Forest
-      </div>
-      <div class="model-panel">
-        <div class="model-row">
-          <span class="label">Status</span>
-          <span class="value" id="modelTrained">Loading…</span>
+    <!-- ── Charts Grid ────────────────────────────────────────────────────────── -->
+    <section class="charts-grid" aria-label="Live metric charts">
+
+      <!-- CPU Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>💻 CPU Usage</h3>
+          <span class="chart-val" id="liveCPU">—</span>
         </div>
-        <div class="model-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
-          <div style="display:flex;justify-content:space-between;width:100%;">
-            <span class="label">Training Progress</span>
-            <span class="value" id="modelSamples">0 / 200</span>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartCPU" aria-label="CPU usage over time"></canvas>
+        </div>
+      </div>
+
+      <!-- RAM Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>🧠 RAM Usage</h3>
+          <span class="chart-val" id="liveRAM">—</span>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartRAM" aria-label="RAM usage over time"></canvas>
+        </div>
+      </div>
+
+      <!-- Disk Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>💾 Disk Usage</h3>
+          <span class="chart-val" id="liveDisk">—</span>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartDisk" aria-label="Disk usage over time"></canvas>
+        </div>
+      </div>
+
+      <!-- Network In Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>📥 Network In</h3>
+          <span class="chart-val" id="liveNetIn">—</span>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartNetIn" aria-label="Inbound network rate over time"></canvas>
+        </div>
+      </div>
+
+      <!-- Network Out Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>📤 Network Out</h3>
+          <span class="chart-val" id="liveNetOut">—</span>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartNetOut" aria-label="Outbound network rate over time"></canvas>
+        </div>
+      </div>
+
+      <!-- Processes Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <h3>⚙️ Processes</h3>
+          <span class="chart-val" id="liveProcs">—</span>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="chartProcs" aria-label="Running process count over time"></canvas>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── Bottom Grid: Anomaly Table + Model Panel ───────────────────────────── -->
+    <div class="bottom-grid">
+
+      <!-- Anomaly History Table -->
+      <section class="glass-card" aria-label="Anomaly history">
+        <div class="card-title">
+          <span class="icon">🚨</span>
+          Anomaly Log
+          <span style="margin-left:auto;font-size:0.8rem;font-weight:500;color:var(--accent-red);"
+            id="anomalyCount">0</span> detected
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>CPU</th>
+                <th>RAM</th>
+                <th>Score</th>
+                <th>Severity</th>
+              </tr>
+            </thead>
+            <tbody id="anomalyTbody">
+              <tr>
+                <td colspan="5" class="no-data">Waiting for data…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Model Status + Retrain -->
+      <section class="glass-card" aria-label="AI model status">
+        <div class="card-title">
+          <span class="icon">🤖</span>
+          AI Model — Isolation Forest
+        </div>
+        <div class="model-panel">
+          <div class="model-row">
+            <span class="label">Status</span>
+            <span class="value" id="modelTrained">Loading…</span>
           </div>
-          <div style="display:flex;align-items:center;width:100%;gap:8px;">
-            <div class="progress-bar-wrap">
-              <div class="progress-bar-fill" id="trainProgress" style="width:0%"></div>
+          <div class="model-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+            <div style="display:flex;justify-content:space-between;width:100%;">
+              <span class="label">Training Progress</span>
+              <span class="value" id="modelSamples">0 / 200</span>
+            </div>
+            <div style="display:flex;align-items:center;width:100%;gap:8px;">
+              <div class="progress-bar-wrap">
+                <div class="progress-bar-fill" id="trainProgress" style="width:0%"></div>
+              </div>
             </div>
           </div>
+          <div class="model-row">
+            <span class="label">Contamination</span>
+            <span class="value" id="contamination">0.05</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Total Readings</span>
+            <span class="value" id="totalMetrics">0</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Thresholds</span>
+            <span class="value" style="font-size:0.75rem;">Low &lt;-0.1 · Med &lt;-0.3 · High &lt;-0.5</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Features</span>
+            <span class="value" style="font-size:0.75rem;">CPU, RAM, Disk, Net↑, Net↓, Procs</span>
+          </div>
+          <div style="margin-top:var(--space-md);">
+            <button class="btn btn-primary" id="retrainBtn" title="Trigger manual model retraining">
+              🔄 Retrain Model
+            </button>
+          </div>
         </div>
-        <div class="model-row">
-          <span class="label">Contamination</span>
-          <span class="value" id="contamination">0.05</span>
-        </div>
-        <div class="model-row">
-          <span class="label">Total Readings</span>
-          <span class="value" id="totalMetrics">0</span>
-        </div>
-        <div class="model-row">
-          <span class="label">Thresholds</span>
-          <span class="value" style="font-size:0.75rem;">Low &lt;-0.1 · Med &lt;-0.3 · High &lt;-0.5</span>
-        </div>
-        <div class="model-row">
-          <span class="label">Features</span>
-          <span class="value" style="font-size:0.75rem;">CPU, RAM, Disk, Net↑, Net↓, Procs</span>
-        </div>
-        <div style="margin-top:var(--space-md);">
-          <button class="btn btn-primary" id="retrainBtn" title="Trigger manual model retraining">
-            🔄 Retrain Model
-          </button>
-        </div>
-      </div>
-    </section>
+      </section>
 
-  </div><!-- /bottom-grid -->
+    </div><!-- /bottom-grid -->
 
-  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
-  <footer class="footer">
-    <p>
-      Built with ❤️ by <span>CU — MCA Group-4</span> &nbsp;|&nbsp;
-      <span>NTPL Digital Private Limited, Noida</span> &nbsp;|&nbsp;
-      AI: Isolation Forest · Stack: Python · Flask · Chart.js · SQLite
-    </p>
-  </footer>
+    <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+    <footer class="footer">
+      <p>
+        Built with ❤️ by <span>CU — MCA Group-4</span> &nbsp;|&nbsp;
+        <span>NTPL Digital Private Limited, Noida</span> &nbsp;|&nbsp;
+        AI: Isolation Forest · Stack: Python · Flask · Chart.js · SQLite
+      </p>
+    </footer>
 
-</div><!-- /#app -->
+  </div><!-- /#app -->
 
-<!-- App JS (deferred after DOM & Chart.js) -->
-<script src="app.js" defer></script>
+  <!-- App JS (deferred after DOM & Chart.js) -->
+  <script src="app.js" defer></script>
 
-<!-- Patch server name/IP from status API on load -->
-<script>
-  // Lightweight inline patch: fill header server info once status arrives
-  // The app.js handles this in fetchAll(), but we also do it here for the
-  // very first render to avoid flickering.
-  (function patchHeader() {
-    fetch("/api/status")
-      .then(r => r.json())
-      .then(d => {
-        const sn = document.getElementById("headerServerName");
-        const si = document.getElementById("headerServerIP");
-        if (sn && d.server_name) sn.textContent = d.server_name;
-        if (si && d.server_ip)   si.textContent = d.server_ip;
-      })
-      .catch(() => {});
-  })();
-</script>
+  <!-- Patch server name/IP from status API on load -->
+  <script>
+    // Lightweight inline patch: fill header server info once status arrives
+    // The app.js handles this in fetchAll(), but we also do it here for the
+    // very first render to avoid flickering.
+    (function patchHeader() {
+      fetch("/api/status")
+        .then(r => r.json())
+        .then(d => {
+          const sn = document.getElementById("headerServerName");
+          const si = document.getElementById("headerServerIP");
+          if (sn && d.server_name) sn.textContent = d.server_name;
+          if (si && d.server_ip) si.textContent = d.server_ip;
+        })
+        .catch(() => { });
+    })();
+  </script>
 
 </body>
+
 </html>

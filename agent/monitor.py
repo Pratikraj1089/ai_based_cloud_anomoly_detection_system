@@ -93,9 +93,13 @@ def collect_metrics() -> dict:
     # Number of running processes
     proc_count = len(psutil.pids())
 
-    # System uptime in seconds
-    boot_time  = psutil.boot_time()
-    uptime_sec = time.time() - boot_time
+    # System uptime in seconds — read /proc/uptime directly for accuracy.
+    # psutil.boot_time() can be wrong on laptops that suspend/hibernate.
+    try:
+        with open("/proc/uptime", "r") as f:
+            uptime_sec = float(f.read().split()[0])
+    except Exception:
+        uptime_sec = time.time() - psutil.boot_time()  # fallback
 
     return {
         "timestamp":   datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),

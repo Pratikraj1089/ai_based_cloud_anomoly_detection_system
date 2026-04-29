@@ -71,6 +71,15 @@ def init_db() -> None:
         message   TEXT    NOT NULL,
         status    TEXT    NOT NULL CHECK(status IN ('sent','pending','failed'))
     );
+
+    -- Table 4: monitored servers (for agentless ssh monitoring)
+    CREATE TABLE IF NOT EXISTS servers (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        name     TEXT    NOT NULL,
+        ip       TEXT    NOT NULL,
+        port     INTEGER NOT NULL DEFAULT 22,
+        username TEXT    NOT NULL
+    );
     """
     try:
         with get_connection() as conn:
@@ -212,4 +221,31 @@ def get_alerts(limit: int = 50) -> list[dict]:
             return [dict(r) for r in rows]
     except Exception as exc:
         logger.exception("get_alerts failed: %s", exc)
+        return []
+
+# ─── Servers ──────────────────────────────────────────────────────────────────
+
+def add_server(name: str, ip: str, port: int, username: str) -> int:
+    """Add a new server for SSH monitoring."""
+    sql = """
+    INSERT INTO servers (name, ip, port, username)
+    VALUES (:name, :ip, :port, :username)
+    """
+    try:
+        with get_connection() as conn:
+            cursor = conn.execute(sql, {"name": name, "ip": ip, "port": port, "username": username})
+            return cursor.lastrowid
+    except Exception as exc:
+        logger.exception("add_server failed: %s", exc)
+        raise
+
+def get_servers() -> list[dict]:
+    """Retrieve all monitored servers."""
+    sql = "SELECT id, name, ip, port, username FROM servers ORDER BY id DESC"
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.exception("get_servers failed: %s", exc)
         return []

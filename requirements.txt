@@ -29,3 +29,6 @@ schedule==1.2.2
 
 # ── Optional: Jupyter for exploratory analysis ───────────────
 # jupyter==1.0.0
+\nparamiko==4.0.0
+bcrypt==5.0.0
+cryptography==42.0.5

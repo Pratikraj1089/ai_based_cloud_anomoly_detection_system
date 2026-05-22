@@ -207,6 +207,7 @@ class AnomalyDetector:
             "model_path":    self.model_path if self.is_trained else None,
             "contamination": CONTAMINATION,
             "features":      FEATURE_COLS,
+            "train_samples_required": MODEL_TRAIN_SAMPLES,
             "thresholds": {
                 "ai_fallback_threshold": -0.75
             },

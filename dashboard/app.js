@@ -268,7 +268,7 @@ function renderModelPanel(status) {
     if (!status) return;
     const model = status.model || {};
     const total = status.total_metrics || 0;
-    const trainSamples = 200;
+    const trainSamples = model.train_samples_required || 20;
     const pct = Math.min((total / trainSamples) * 100, 100);
 
     el("modelTrained") && (el("modelTrained").textContent = model.is_trained ? "✅ Yes" : "❌ No (collecting data)");

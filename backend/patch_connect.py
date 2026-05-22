@@ -39,17 +39,25 @@ def connect_server():
             server["ip"], port=server["port"],
             username=server["username"], password=password,
             timeout=10,
+            allow_agent=False,
+            look_for_keys=False,
         )
 
         # Comprehensive bash collector — mirrors local agent metrics exactly
         bash_lines = [
             "set -e",
-            # CPU via /proc/stat (accurate, not affected by top sampling)
-            "cpu_line=$(head -1 /proc/stat)",
-            "read -r tag user nice sys idle iowait irq sirq steal <<< $cpu_line",
-            "total=$((user+nice+sys+idle+iowait+irq+sirq+steal))",
-            "used=$((total-idle))",
-            'cpu_pct=$(awk "BEGIN{printf \\"%.1f\\", ($used/$total)*100}")',
+            # CPU usage over 1 second (interval rate)
+            "read -r tag u1 n1 s1 i1 io1 ir1 si1 st1 _ < /proc/stat",
+            "prev_total=$((u1+n1+s1+i1+io1+ir1+si1+st1))",
+            "prev_idle=$((i1+io1))",
+            "sleep 1",
+            "read -r tag u2 n2 s2 i2 io2 ir2 si2 st2 _ < /proc/stat",
+            "total=$((u2+n2+s2+i2+io2+ir2+si2+st2))",
+            "idle=$((i2+io2))",
+            "diff_total=$((total-prev_total))",
+            "diff_idle=$((idle-prev_idle))",
+            "diff_used=$((diff_total-diff_idle))",
+            'if [ "$diff_total" -eq 0 ]; then cpu_pct="0.0"; else cpu_pct=$(awk "BEGIN{printf \\"%.1f\\", ($diff_used/$diff_total)*100}"); fi',
             # RAM
             "mem_total=$(awk '/MemTotal/{print $2}' /proc/meminfo)",
             "mem_avail=$(awk '/MemAvailable/{print $2}' /proc/meminfo)",

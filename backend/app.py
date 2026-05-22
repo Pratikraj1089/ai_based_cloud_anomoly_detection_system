@@ -303,14 +303,26 @@ def add_new_server():
 # Reads from /proc/* for accuracy (handles suspend/resume).
 # Returns a single JSON line with all fields.
 _SSH_METRIC_SCRIPT = """
-# CPU usage % from /proc/stat (first line = aggregate)
-cpu_line=$(head -1 /proc/stat)
-set -- $cpu_line
-shift  # remove "cpu" tag
-user=$1 nice=$2 sys=$3 idle=$4 iowait=$5 irq=$6 sirq=$7 steal=$8
-total=$((user+nice+sys+idle+iowait+irq+sirq+steal))
-used=$((total-idle))
-cpu_pct=$(awk "BEGIN{printf \\"%.1f\\", ($used/$total)*100}")
+# CPU usage over 1 second (interval rate)
+read -r tag u1 n1 s1 i1 io1 ir1 si1 st1 _ < /proc/stat
+prev_total=$((u1+n1+s1+i1+io1+ir1+si1+st1))
+prev_idle=$((i1+io1))
+
+sleep 1
+
+read -r tag u2 n2 s2 i2 io2 ir2 si2 st2 _ < /proc/stat
+total=$((u2+n2+s2+i2+io2+ir2+si2+st2))
+idle=$((i2+io2))
+
+diff_total=$((total-prev_total))
+diff_idle=$((idle-prev_idle))
+diff_used=$((diff_total-diff_idle))
+
+if [ "$diff_total" -eq 0 ]; then
+    cpu_pct="0.0"
+else
+    cpu_pct=$(awk "BEGIN{printf \\"%.1f\\", ($diff_used/$diff_total)*100}")
+fi
 
 # RAM usage % from /proc/meminfo
 mem_total=$(awk '/MemTotal/{print $2}'    /proc/meminfo)
@@ -371,6 +383,8 @@ def connect_server():
             username=server["username"],
             password=password,
             timeout=10,
+            allow_agent=False,
+            look_for_keys=False,
         )
 
         _, stdout, stderr = ssh.exec_command(_SSH_METRIC_SCRIPT)

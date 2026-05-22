@@ -11,10 +11,30 @@ No hardcoded values should exist in any other file.
 """
 
 import os
+import socket
+
+def _get_default_hostname():
+    try:
+        return socket.gethostname()
+    except Exception:
+        return "VPS-Server-01"
+
+def _get_default_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 # ─── Agent / Server Identity ────────────────────────────────────────────────
-SERVER_NAME   = os.getenv("SERVER_NAME", "VPS-Server-01")
-SERVER_IP     = os.getenv("SERVER_IP", "127.0.0.1")
+_env_name = os.getenv("SERVER_NAME", "")
+SERVER_NAME = _env_name if (_env_name and _env_name != "VPS-Server-01") else _get_default_hostname()
+
+_env_ip = os.getenv("SERVER_IP", "")
+SERVER_IP = _env_ip if (_env_ip and _env_ip != "127.0.0.1") else _get_default_ip()
 
 # ─── API Settings ────────────────────────────────────────────────────────────
 API_HOST      = os.getenv("API_HOST", "0.0.0.0")

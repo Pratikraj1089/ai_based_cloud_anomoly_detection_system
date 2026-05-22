@@ -12,6 +12,10 @@ No hardcoded values should exist in any other file.
 
 import os
 import socket
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv(override=True)
 
 def _get_default_hostname():
     try:

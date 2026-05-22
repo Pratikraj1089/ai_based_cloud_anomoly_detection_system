@@ -21,6 +21,7 @@ seaborn==0.13.2
 flask==3.0.3
 flask-cors==4.0.1
 flask-sock==0.7.0
+python-dotenv==1.2.2
 
 # ── HTTP client (agent → API) ────────────────────────────────
 requests==2.32.3

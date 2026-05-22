@@ -37,7 +37,7 @@ sys.path.insert(0, ROOT_DIR)
 from config import (
     API_HOST, API_PORT, API_KEY,
     MODEL_TRAIN_SAMPLES, LOG_LEVEL, LOG_DIR,
-    SERVER_NAME, SERVER_IP,
+    SERVER_NAME, SERVER_IP, AGENT_INTERVAL_SECONDS,
 )
 from backend.database import (
     init_db, insert_metric, get_latest_metrics,
@@ -490,7 +490,7 @@ def background_poll_loop():
     logger.info("Background metrics polling thread started.")
     while True:
         try:
-            time.sleep(60)
+            time.sleep(AGENT_INTERVAL_SECONDS)
             
             active_sessions = ssh_pool.get_active_sessions()
             for server_id, ssh in active_sessions.items():

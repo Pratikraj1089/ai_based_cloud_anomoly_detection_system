@@ -19,7 +19,7 @@ Responsibilities:
 // ─── Configuration ────────────────────────────────────────────────────────────
 const CONFIG = {
     apiBase: "", // same origin — Flask serves the dashboard
-    pollInterval: 10_000, // ms
+    pollInterval: 5_000, // ms
     maxPoints: 100,
     apiKey: "mca-group4-secret-key",
 };

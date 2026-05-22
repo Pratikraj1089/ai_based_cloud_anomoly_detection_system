@@ -22,10 +22,13 @@ import os
 import sys
 import logging
 import json
+import threading
+import time
 from datetime import datetime, timezone
 
 from flask      import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_sock import Sock
 
 # -- Path resolution: allow imports from project root -------------------------
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +44,7 @@ from backend.database import (
     get_anomalies, get_alerts, count_metrics,
     get_metrics_for_training,
 )
-from backend.model   import detector
+from backend.model   import get_detector
 from backend.alerts  import dispatch_alert
 
 # --- Logging Setup -----------------------------------------------------------
@@ -61,17 +64,28 @@ DASHBOARD_DIR = os.path.join(ROOT_DIR, "dashboard")
 
 app = Flask(__name__, static_folder=DASHBOARD_DIR, static_url_path="/")
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+sock = Sock(app)
 
 # Initialise database tables on startup
 init_db()
 
-# Track latest status for the status endpoint
-_latest_status = {
-    "status":       "starting",
-    "last_updated": None,
-    "server_name":  SERVER_NAME,
-    "server_ip":    SERVER_IP,
-}
+# Track latest statuses by server_id
+_latest_statuses = {}
+
+def get_latest_status(server_id: int) -> dict:
+    server_id = int(server_id or 0)
+    if server_id not in _latest_statuses:
+        _latest_statuses[server_id] = {
+            "status":       "starting",
+            "last_updated": None,
+            "server_name":  SERVER_NAME if server_id == 0 else f"VPS-{server_id}",
+            "server_ip":    SERVER_IP if server_id == 0 else "",
+            "severity":     None,
+            "score":        0.0,
+            "metric_id":    None,
+            "total_metrics": 0,
+        }
+    return _latest_statuses[server_id]
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -141,7 +155,7 @@ def receive_metrics():
         logger.exception("Failed to insert metric: %s", exc)
         return _json_error("Database write failed", 500)
 
-    prediction = detector.predict(data)
+    prediction = get_detector(0).predict(data)
     is_anomaly = prediction["is_anomaly"]
     severity   = prediction["severity"]
     score      = prediction["score"]
@@ -149,18 +163,19 @@ def receive_metrics():
     if is_anomaly:
         try:
             from backend.database import insert_anomaly
-            insert_anomaly(data, score, severity)
+            insert_anomaly(data, score, severity, 0)
         except Exception as exc:
             logger.error("Failed to insert anomaly record: %s", exc)
         dispatch_alert(severity, score, data)
 
-    total = count_metrics()
+    total = count_metrics(0)
+    detector = get_detector(0)
     if not detector.is_trained and total >= MODEL_TRAIN_SAMPLES:
         logger.info("Auto-training model on %d samples ...", total)
-        training_data = get_metrics_for_training(MODEL_TRAIN_SAMPLES)
+        training_data = get_metrics_for_training(MODEL_TRAIN_SAMPLES, 0)
         detector.train(training_data)
 
-    _latest_status.update({
+    get_latest_status(0).update({
         "status":        "anomaly" if is_anomaly else "normal",
         "last_updated":  data["timestamp"],
         "severity":      severity if is_anomaly else None,
@@ -180,10 +195,13 @@ def receive_metrics():
 
 @app.route("/api/metrics/latest", methods=["GET"])
 def latest_metrics():
-    """Return the last 100 metric readings (chronological order)."""
+    """Return the last 100 metric readings (chronological order) for a server."""
     try:
-        limit   = int(request.args.get("limit", 100))
-        metrics = get_latest_metrics(limit)
+        limit     = int(request.args.get("limit", 100))
+        server_id = request.args.get("server_id", None)
+        if server_id is not None:
+            server_id = int(server_id)
+        metrics = get_latest_metrics(limit, server_id)
         return jsonify({"success": True, "data": metrics, "count": len(metrics)})
     except Exception as exc:
         logger.exception("latest_metrics error: %s", exc)
@@ -194,10 +212,13 @@ def latest_metrics():
 
 @app.route("/api/anomalies", methods=["GET"])
 def anomaly_history():
-    """Return the most recent anomaly records."""
+    """Return the most recent anomaly records for a server."""
     try:
         limit     = int(request.args.get("limit", 50))
-        anomalies = get_anomalies(limit)
+        server_id = request.args.get("server_id", None)
+        if server_id is not None:
+            server_id = int(server_id)
+        anomalies = get_anomalies(limit, server_id)
         return jsonify({"success": True, "data": anomalies, "count": len(anomalies)})
     except Exception as exc:
         logger.exception("anomaly_history error: %s", exc)
@@ -208,16 +229,29 @@ def anomaly_history():
 
 @app.route("/api/status", methods=["GET"])
 def server_status():
-    """Return current monitoring status and model info."""
+    """Return current monitoring status and model info for a server."""
     try:
+        server_id = request.args.get("server_id", 0, type=int)
+        detector = get_detector(server_id)
+        
+        name = SERVER_NAME
+        ip = SERVER_IP
+        if server_id != 0:
+            server = get_server_by_id(server_id)
+            if server:
+                name = server["name"]
+                ip = server["ip"]
+                
+        status_data = get_latest_status(server_id)
+        
         return jsonify({
             "success":      True,
-            "server_name":  SERVER_NAME,
-            "server_ip":    SERVER_IP,
+            "server_name":  name,
+            "server_ip":    ip,
             "data": {
-                **_latest_status,
+                **status_data,
                 "model":         detector.status(),
-                "total_metrics": count_metrics(),
+                "total_metrics": count_metrics(server_id),
             },
         })
     except Exception as exc:
@@ -234,14 +268,16 @@ def manual_train():
         return _json_error("Unauthorized", 401)
 
     try:
+        server_id     = request.args.get("server_id", 0, type=int)
         limit         = int(request.args.get("limit", MODEL_TRAIN_SAMPLES))
-        training_data = get_metrics_for_training(limit)
+        training_data = get_metrics_for_training(limit, server_id)
 
         if len(training_data) < MODEL_TRAIN_SAMPLES:
             return _json_error(
                 f"Not enough data. Need {MODEL_TRAIN_SAMPLES}, have {len(training_data)}.", 400
             )
 
+        detector = get_detector(server_id)
         ok = detector.train(training_data)
         if ok:
             return jsonify({"success": True, "message": "Model retrained successfully.", "samples": len(training_data)})
@@ -347,19 +383,323 @@ printf '{"cpu":%s,"ram":%s,"disk":%s,"processes":%d,"uptime":%s,"net_rx_bytes":%
 """
 
 
+# --- SSH Connection Pool & Background Polling --------------------------------
+
+class SSHConnectionPool:
+    def __init__(self):
+        self.connections = {}  # server_id -> SSHClient
+        self.passwords = {}    # server_id -> password
+        self.net_stats = {}    # server_id -> {"last_rx": float, "last_tx": float, "last_ts": float}
+        self.lock = threading.Lock()
+
+    def add(self, server_id, ssh, password):
+        server_id = int(server_id)
+        with self.lock:
+            if server_id in self.connections:
+                try:
+                    self.connections[server_id].close()
+                except Exception:
+                    pass
+            self.connections[server_id] = ssh
+            self.passwords[server_id] = password
+
+    def get(self, server_id):
+        server_id = int(server_id)
+        with self.lock:
+            return self.connections.get(server_id)
+
+    def remove(self, server_id):
+        server_id = int(server_id)
+        with self.lock:
+            ssh = self.connections.pop(server_id, None)
+            self.passwords.pop(server_id, None)
+            self.net_stats.pop(server_id, None)
+            if ssh:
+                try:
+                    ssh.close()
+                except Exception:
+                    pass
+
+    def get_active_sessions(self):
+        with self.lock:
+            active = {}
+            for sid, ssh in list(self.connections.items()):
+                try:
+                    if ssh.get_transport() and ssh.get_transport().is_active():
+                        active[sid] = ssh
+                    else:
+                        # try to reconnect using cached credentials
+                        password = self.passwords.get(sid)
+                        if password:
+                            server = get_server_by_id(sid)
+                            if server:
+                                logger.info("Reconnecting to server %d ...", sid)
+                                import paramiko
+                                new_ssh = paramiko.SSHClient()
+                                new_ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                                new_ssh.connect(
+                                    server["ip"], port=server["port"],
+                                    username=server["username"], password=password,
+                                    timeout=10, allow_agent=False, look_for_keys=False
+                                )
+                                self.connections[sid] = new_ssh
+                                active[sid] = new_ssh
+                                continue
+                        # If reconnect fails, remove it
+                        self.connections.pop(sid, None)
+                except Exception as exc:
+                    logger.warning("Session validation/reconnect failed for server %d: %s", sid, exc)
+                    self.connections.pop(sid, None)
+            return active
+
+    def update_net_stats(self, server_id, rx, tx, ts):
+        server_id = int(server_id)
+        with self.lock:
+            self.net_stats[server_id] = {"last_rx": rx, "last_tx": tx, "last_ts": ts}
+
+    def get_net_stats(self, server_id):
+        server_id = int(server_id)
+        with self.lock:
+            return self.net_stats.get(server_id)
+
+
+def get_server_by_id(server_id):
+    from backend.database import get_servers
+    servers = get_servers()
+    return next((s for s in servers if s["id"] == int(server_id)), None)
+
+
+ssh_pool = SSHConnectionPool()
+_metrics_ws_clients = set()
+
+
+def broadcast_metrics_update(server_id, metrics, prediction):
+    payload = json.dumps({
+        "server_id": server_id,
+        "metrics": metrics,
+        "prediction": prediction,
+    })
+    for client in list(_metrics_ws_clients):
+        try:
+            client.send(payload)
+        except Exception:
+            _metrics_ws_clients.discard(client)
+
+
+def background_poll_loop():
+    logger.info("Background metrics polling thread started.")
+    while True:
+        try:
+            time.sleep(60)
+            
+            active_sessions = ssh_pool.get_active_sessions()
+            for server_id, ssh in active_sessions.items():
+                try:
+                    _, stdout, stderr = ssh.exec_command(_SSH_METRIC_SCRIPT)
+                    output = stdout.read().decode("utf-8").strip()
+                    if not output:
+                        continue
+                    
+                    raw = json.loads(output)
+                    server = get_server_by_id(server_id)
+                    if not server:
+                        continue
+                    
+                    now_ts = time.time()
+                    stats = ssh_pool.get_net_stats(server_id)
+                    
+                    net_in = 0.0
+                    net_out = 0.0
+                    curr_rx = float(raw.get("net_rx_bytes", 0))
+                    curr_tx = float(raw.get("net_tx_bytes", 0))
+                    
+                    if stats:
+                        dt = now_ts - stats["last_ts"]
+                        if dt > 0:
+                            net_in = max(0.0, (curr_rx - stats["last_rx"]) / dt)
+                            net_out = max(0.0, (curr_tx - stats["last_tx"]) / dt)
+                    
+                    ssh_pool.update_net_stats(server_id, curr_rx, curr_tx, now_ts)
+                    
+                    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+                    metrics = {
+                        "cpu":         raw.get("cpu",       0),
+                        "ram":         raw.get("ram",       0),
+                        "disk":        raw.get("disk",      0),
+                        "network_in":  round(net_in, 2),
+                        "network_out": round(net_out, 2),
+                        "processes":   raw.get("processes", 0),
+                        "uptime":      raw.get("uptime",    0),
+                        "server_id":   server_id,
+                        "timestamp":   ts,
+                    }
+                    
+                    # Save to DB
+                    metric_id = insert_metric(metrics)
+                    
+                    # Run anomaly detection
+                    detector = get_detector(server_id)
+                    prediction = detector.predict(metrics)
+                    
+                    is_anomaly = prediction["is_anomaly"]
+                    severity   = prediction["severity"]
+                    score      = prediction["score"]
+                    
+                    if is_anomaly:
+                        try:
+                            from backend.database import insert_anomaly
+                            insert_anomaly(metrics, score, severity, server_id)
+                        except Exception as e:
+                            logger.error("Failed to insert remote anomaly record: %s", e)
+                        dispatch_alert(severity, score, metrics)
+                        
+                    total_samples = count_metrics(server_id)
+                    if not detector.is_trained and total_samples >= MODEL_TRAIN_SAMPLES:
+                        logger.info("Auto-training model for server %d on %d samples...", server_id, total_samples)
+                        training_data = get_metrics_for_training(MODEL_TRAIN_SAMPLES, server_id)
+                        detector.train(training_data)
+                        
+                    get_latest_status(server_id).update({
+                        "status":        "anomaly" if is_anomaly else "normal",
+                        "last_updated":  ts,
+                        "severity":      severity if is_anomaly else None,
+                        "score":         score,
+                        "metric_id":     metric_id,
+                        "total_metrics": total_samples,
+                    })
+                    
+                    broadcast_metrics_update(server_id, metrics, prediction)
+                    
+                except Exception as exc:
+                    logger.error("Error polling metrics for server %d: %s", server_id, exc)
+                    
+        except Exception as exc:
+            logger.exception("Error in background_poll_loop: %s", exc)
+
+
+# --- WebSockets --------------------------------------------------------------
+
+@sock.route('/ws/metrics')
+def metrics_ws(ws):
+    logger.info("Dashboard metrics WS client connected.")
+    _metrics_ws_clients.add(ws)
+    try:
+        while True:
+            msg = ws.receive()
+            if msg is None:
+                break
+    finally:
+        _metrics_ws_clients.discard(ws)
+        logger.info("Dashboard metrics WS client disconnected.")
+
+
+@sock.route('/ws/terminal')
+def terminal_ws(ws):
+    import pty
+    import os
+    import select
+    import subprocess
+    import threading
+
+    server_id = request.args.get("server_id")
+    logger.info("Terminal WS: Connection request for server_id: %s", server_id)
+    if not server_id:
+        logger.warning("Terminal WS: Missing server_id")
+        ws.send("Error: Missing server_id\r\n")
+        ws.close()
+        return
+
+    server = get_server_by_id(server_id)
+    if not server:
+        logger.warning("Terminal WS: Server not found for server_id: %s", server_id)
+        ws.send(f"Error: Server with ID {server_id} not found in database.\r\n")
+        ws.close()
+        return
+
+    ip = server["ip"]
+    username = server["username"] or "root"
+    port = str(server.get("port", 22))
+
+    cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        f"{username}@{ip}",
+        "-p", port
+    ]
+    logger.info("Terminal WS: Spawning command: %s", " ".join(cmd))
+
+    try:
+        pid, fd = pty.fork()
+    except Exception as exc:
+        logger.exception("Terminal WS: Failed to fork PTY")
+        ws.send(f"Error spawning pseudo-terminal: {exc}\r\n")
+        ws.close()
+        return
+
+    if pid == 0:
+        # Child process: execute the SSH command
+        try:
+            os.execvp("ssh", cmd)
+        except Exception:
+            os._exit(1)
+
+    # Parent process: handle stream between PTY and WS
+    def stream_pty_to_ws():
+        logger.info("Terminal WS: Starting PTY to WebSocket stream thread for server_id: %s", server_id)
+        try:
+            while True:
+                # Use select to check if fd is readable with a 50ms timeout
+                r, _, _ = select.select([fd], [], [], 0.05)
+                if fd in r:
+                    try:
+                        data = os.read(fd, 1024)
+                    except OSError:
+                        # Raised when the child process exits/hangs up
+                        break
+                    if not data:
+                        break
+                    ws.send(data.decode("utf-8", errors="ignore"))
+        except Exception as e:
+            logger.error("Terminal WS: Exception in PTY-to-WS stream for server_id %s: %s", server_id, e)
+        finally:
+            logger.info("Terminal WS: Closing PTY to WebSocket stream and WebSocket for server_id: %s", server_id)
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=stream_pty_to_ws)
+    t.daemon = True
+    t.start()
+
+    try:
+        while True:
+            data = ws.receive()
+            if data is None:
+                logger.info("Terminal WS: Received close frame/empty data from WebSocket for server_id: %s", server_id)
+                break
+            os.write(fd, data.encode("utf-8"))
+    except Exception as e:
+        logger.error("Terminal WS: Exception in WS-to-PTY stream for server_id %s: %s", server_id, e)
+    finally:
+        logger.info("Terminal WS: Cleaning up shell process PID: %d for server_id: %s", pid, server_id)
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        try:
+            os.kill(pid, 9)
+        except Exception:
+            pass
+
+
+# --- API Connections ---------------------------------------------------------
+
 @app.route("/api/server/connect", methods=["POST"])
 def connect_server():
     """
-    SSH into a saved VPS, collect full system metrics, run anomaly detection.
-
-    The password is used only for this single SSH session and is NEVER stored.
-    Returns:
-      - metrics      : dict with cpu, ram, disk, processes, uptime, network_in/out
-      - net_rx_bytes : cumulative RX bytes (dashboard calculates per-interval rate)
-      - net_tx_bytes : cumulative TX bytes
-      - prediction   : anomaly detection result
-      - server_name  : display name of the server
-      - server_ip    : IP address of the server
+    SSH into a saved VPS, cache the session in the pool, and start background polling.
     """
     try:
         body      = request.get_json(force=True)
@@ -368,9 +708,7 @@ def connect_server():
         if not server_id or not password:
             return _json_error("Missing server_id or password")
 
-        from backend.database import get_servers
-        servers = get_servers()
-        server  = next((s for s in servers if s["id"] == int(server_id)), None)
+        server = get_server_by_id(server_id)
         if not server:
             return _json_error("Server not found", 404)
 
@@ -390,34 +728,43 @@ def connect_server():
         _, stdout, stderr = ssh.exec_command(_SSH_METRIC_SCRIPT)
         output = stdout.read().decode("utf-8").strip()
         err    = stderr.read().decode("utf-8").strip()
-        ssh.close()
 
         if not output:
+            ssh.close()
             logger.error("SSH script returned empty output. stderr: %s", err)
             return _json_error("No output from remote script -- check user permissions", 500)
 
-        try:
-            raw = json.loads(output)
-        except json.JSONDecodeError:
-            logger.error("JSON parse error. output=%r stderr=%s", output, err)
-            return _json_error("Failed to parse remote metrics", 500)
+        raw = json.loads(output)
+        
+        ssh_pool.add(server_id, ssh, password)
+        now_ts = time.time()
+        ssh_pool.update_net_stats(server_id, float(raw.get("net_rx_bytes", 0)), float(raw.get("net_tx_bytes", 0)), now_ts)
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        # network_in/out kept as 0 for anomaly scoring (model trained on rates,
-        # not cumulative bytes); the real cumulative bytes are returned separately
-        # so the dashboard can compute the rate between successive calls.
         metrics = {
             "cpu":         raw.get("cpu",       0),
             "ram":         raw.get("ram",       0),
             "disk":        raw.get("disk",      0),
             "processes":   raw.get("processes", 0),
             "uptime":      raw.get("uptime",    0),
-            "network_in":  0,
-            "network_out": 0,
+            "network_in":  0.0,
+            "network_out": 0.0,
+            "server_id":   server_id,
             "timestamp":   ts,
         }
 
+        metric_id = insert_metric(metrics)
+        detector = get_detector(server_id)
         prediction = detector.predict(metrics)
+
+        get_latest_status(server_id).update({
+            "status":        "anomaly" if prediction["is_anomaly"] else "normal",
+            "last_updated":  ts,
+            "severity":      prediction["severity"] if prediction["is_anomaly"] else None,
+            "score":         prediction["score"],
+            "metric_id":     metric_id,
+            "total_metrics": count_metrics(server_id),
+        })
 
         return jsonify({
             "success":      True,
@@ -434,6 +781,33 @@ def connect_server():
     except Exception as exc:
         logger.exception("connect_server error: %s", exc)
         return _json_error("Connection failed: " + str(exc), 500)
+
+
+@app.route("/api/server/disconnect", methods=["POST"])
+def disconnect_server():
+    """
+    Close active SSH connection and remove from connection pool.
+    """
+    try:
+        body = request.get_json(force=True)
+        server_id = body.get("server_id")
+        if not server_id:
+            return _json_error("Missing server_id")
+
+        ssh_pool.remove(server_id)
+
+        get_latest_status(server_id).update({
+            "status":        "unknown",
+            "last_updated":  None,
+            "severity":      None,
+            "score":         0.0,
+            "metric_id":     None,
+        })
+
+        return jsonify({"success": True, "message": f"Server {server_id} disconnected."})
+    except Exception as exc:
+        logger.exception("disconnect_server error: %s", exc)
+        return _json_error("Disconnect failed: " + str(exc), 500)
 
 
 # --- Health Check ------------------------------------------------------------
@@ -466,4 +840,10 @@ def internal_error(exc):
 
 if __name__ == "__main__":
     logger.info("Starting Flask API on %s:%d", API_HOST, API_PORT)
+    
+    # Start background polling loop as a daemon thread
+    t = threading.Thread(target=background_poll_loop)
+    t.daemon = True
+    t.start()
+    
     app.run(host=API_HOST, port=API_PORT, debug=False)

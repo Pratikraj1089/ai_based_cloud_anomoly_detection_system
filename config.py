@@ -54,7 +54,7 @@ DB_PATH    = os.getenv("DB_PATH", os.path.join(BASE_DIR, "backend", "anomaly_det
 # ─── ML Model ────────────────────────────────────────────────────────────────
 MODEL_PATH          = os.getenv("MODEL_PATH", os.path.join(BASE_DIR, "backend", "isolation_forest.joblib"))
 SCALER_PATH         = os.getenv("SCALER_PATH", os.path.join(BASE_DIR, "backend", "scaler.joblib"))
-MODEL_TRAIN_SAMPLES = int(os.getenv("MODEL_TRAIN_SAMPLES", 200))   # train after this many readings
+MODEL_TRAIN_SAMPLES = int(os.getenv("MODEL_TRAIN_SAMPLES", 20))   # train after this many readings
 CONTAMINATION       = float(os.getenv("CONTAMINATION", 0.05))       # Isolation Forest contamination
 
 # ─── Anomaly Score Thresholds ────────────────────────────────────────────────

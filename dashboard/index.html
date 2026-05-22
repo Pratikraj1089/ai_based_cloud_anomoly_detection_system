@@ -31,6 +31,11 @@
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 
+  <!-- xterm.js CDN -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+
   <!-- Styles -->
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -130,6 +135,11 @@
           <span class="server-ip" id="headerServerIP">—</span>
           <span class="last-updated" id="lastUpdated">—</span>
         </div>
+
+        <!-- Disconnect Button -->
+        <button id="btnDisconnectServer" class="btn" style="display: none; background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; font-size: 0.8rem; border-radius: 6px; cursor: pointer; transition: background 0.2s; align-self: center;">
+          🔌 Disconnect
+        </button>
       </div>
     </header>
 
@@ -180,8 +190,24 @@
       </div>
     </nav>
 
-    <!-- ── Stat Cards ────────────────────────────────────────────────────────── -->
-    <section class="stats-grid" aria-label="Current system metrics">
+    <!-- ── Views Tab Switcher ──────────────────────────────────────────────── -->
+    <div class="tabs-container" style="margin: 0 16px 16px 16px; display: flex; gap: 8px;">
+      <button class="tab-btn active" id="tabDashboard" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 8px 16px; border-radius: 6px; font-weight: 500; cursor: pointer; transition: all 0.2s;">📈 Metrics Dashboard</button>
+      <button class="tab-btn" id="tabTerminal" style="display: none; background: transparent; color: #a1a1aa; border: 1px solid transparent; padding: 8px 16px; border-radius: 6px; font-weight: 500; cursor: pointer; transition: all 0.2s;">📟 Web Terminal</button>
+    </div>
+
+    <!-- ── Web Terminal Container ─────────────────────────────────────────── -->
+    <div id="terminalContainer" style="display: none; margin: 0 16px 16px 16px; background: #0b0f19; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); padding: 16px; min-height: 450px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); backdrop-filter: blur(8px);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 0.85rem; color: #a1a1aa; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 8px;">
+        <span style="display: flex; align-items: center; gap: 6px;"><span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; animation: pulse 1.5s infinite;"></span> Interactive SSH Terminal</span>
+        <button class="btn" id="btnTerminalReset" style="padding: 4px 12px; font-size: 0.75rem; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 4px; cursor: pointer; transition: all 0.2s;">Clear & Reset</button>
+      </div>
+      <div id="terminal" style="width: 100%; height: 420px; border-radius: 6px; box-sizing: border-box;"></div>
+    </div>
+
+    <div id="dashboardView">
+      <!-- ── Stat Cards ────────────────────────────────────────────────────────── -->
+      <section class="stats-grid" aria-label="Current system metrics">
 
       <!-- CPU -->
       <article class="stat-card" style="--card-gradient: linear-gradient(135deg,#3b82f6,#06b6d4);">
@@ -425,9 +451,10 @@
       </section>
 
     </div><!-- /bottom-grid -->
+  </div><!-- /dashboardView -->
 
-    <!-- ── Footer ────────────────────────────────────────────────────────────── -->
-    <footer class="footer">
+  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+  <footer class="footer">
       <p>
         Built with ❤️ by <span>CU — MCA Group-4</span> &nbsp;|&nbsp;
         <span>NTPL Digital Private Limited, Noida</span> &nbsp;|&nbsp;

@@ -616,6 +616,22 @@ tbody td {
   color: var(--accent-green);
 }
 
+.sev-badge.danger {
+  background: rgba(220, 38, 38, 0.25);
+  color: #ef4444;
+  border: 1px solid rgba(220, 38, 38, 0.4);
+}
+
+.sev-badge.high-anomaly {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--accent-red);
+}
+
+.sev-badge.moderate-anomaly {
+  background: rgba(249, 115, 22, 0.2);
+  color: var(--accent-orange);
+}
+
 /* ── Model Status Panel ──────────────────────────────────── */
 .model-panel {
   display: flex;
@@ -984,4 +1000,27 @@ body.anomaly-flash {
   .server-info {
     align-items: flex-start;
   }
+}
+
+/* ── Tabs & Disconnect Button styles ─────────────────────── */
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.tab-btn.active {
+  background: var(--grad-blue) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+#btnDisconnectServer:hover {
+  background: rgba(239, 68, 68, 0.25) !important;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
 }

@@ -52,7 +52,8 @@ def init_db() -> None:
         network_in   REAL    NOT NULL DEFAULT 0,
         network_out  REAL    NOT NULL DEFAULT 0,
         processes    INTEGER NOT NULL DEFAULT 0,
-        uptime       REAL    NOT NULL DEFAULT 0
+        uptime       REAL    NOT NULL DEFAULT 0,
+        server_id    INTEGER
     );
 
     -- Table 2: detected anomalies with severity
@@ -61,7 +62,8 @@ def init_db() -> None:
         timestamp     TEXT    NOT NULL DEFAULT (datetime('now')),
         metric_values TEXT    NOT NULL,  -- JSON snapshot of the reading
         anomaly_score REAL    NOT NULL,
-        severity      TEXT    NOT NULL CHECK(severity IN ('low','medium','high'))
+        severity      TEXT    NOT NULL,
+        server_id     INTEGER
     );
 
     -- Table 3: alert log (email / webhook events)
@@ -84,6 +86,48 @@ def init_db() -> None:
     try:
         with get_connection() as conn:
             conn.executescript(ddl)
+            
+            # Dynamic Migration: Check if server_id column exists in metrics
+            cursor = conn.execute("PRAGMA table_info(metrics)")
+            columns = [row["name"] for row in cursor.fetchall()]
+            if "server_id" not in columns:
+                conn.execute("ALTER TABLE metrics ADD COLUMN server_id INTEGER")
+                logger.info("Migrated metrics table: added server_id column")
+
+            # Dynamic Migration: Check if server_id column exists in anomalies
+            cursor = conn.execute("PRAGMA table_info(anomalies)")
+            columns = [row["name"] for row in cursor.fetchall()]
+            if "server_id" not in columns:
+                conn.execute("ALTER TABLE anomalies ADD COLUMN server_id INTEGER")
+                logger.info("Migrated anomalies table: added server_id column")
+
+            # Dynamic Migration: Remove CHECK constraint on anomalies table if it exists
+            # We verify this by attempting a temp insert with 'danger' severity
+            try:
+                conn.execute("INSERT INTO anomalies (metric_values, anomaly_score, severity) VALUES ('{}', 0.0, 'danger')")
+                conn.rollback()
+            except sqlite3.IntegrityError:
+                # The CHECK constraint failed, migrate the table
+                logger.info("Migrating anomalies table to remove CHECK constraint...")
+                conn.execute("ALTER TABLE anomalies RENAME TO anomalies_old")
+                conn.execute("""
+                CREATE TABLE anomalies (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp     TEXT    NOT NULL DEFAULT (datetime('now')),
+                    metric_values TEXT    NOT NULL,
+                    anomaly_score REAL    NOT NULL,
+                    severity      TEXT    NOT NULL,
+                    server_id     INTEGER
+                )
+                """)
+                # Populate new table from old data
+                conn.execute("""
+                INSERT INTO anomalies (id, timestamp, metric_values, anomaly_score, severity, server_id)
+                SELECT id, timestamp, metric_values, anomaly_score, severity, server_id FROM anomalies_old
+                """)
+                conn.execute("DROP TABLE anomalies_old")
+                logger.info("Anomalies table migration complete")
+                
         logger.info("Database initialised at %s", DB_PATH)
     except Exception as exc:
         logger.exception("Failed to initialise database: %s", exc)
@@ -97,9 +141,10 @@ def insert_metric(data: dict) -> int:
     Insert a single metric reading.
     Returns the new row id.
     """
+    data.setdefault("server_id", None)
     sql = """
-    INSERT INTO metrics (timestamp, cpu, ram, disk, network_in, network_out, processes, uptime)
-    VALUES (:timestamp, :cpu, :ram, :disk, :network_in, :network_out, :processes, :uptime)
+    INSERT INTO metrics (timestamp, cpu, ram, disk, network_in, network_out, processes, uptime, server_id)
+    VALUES (:timestamp, :cpu, :ram, :disk, :network_in, :network_out, :processes, :uptime, :server_id)
     """
     try:
         with get_connection() as conn:
@@ -110,39 +155,64 @@ def insert_metric(data: dict) -> int:
         raise
 
 
-def get_latest_metrics(limit: int = 100) -> list[dict]:
-    """Return the most recent *limit* metric rows as a list of dicts."""
-    sql = """
-    SELECT * FROM metrics
-    ORDER BY id DESC
-    LIMIT ?
-    """
+def get_latest_metrics(limit: int = 100, server_id: int = None) -> list[dict]:
+    """Return the most recent *limit* metric rows as a list of dicts for a specific server."""
     try:
+        if not server_id:
+            sql = """
+            SELECT * FROM metrics
+            WHERE server_id IS NULL OR server_id = 0
+            ORDER BY id DESC
+            LIMIT ?
+            """
+            params = (limit,)
+        else:
+            sql = """
+            SELECT * FROM metrics
+            WHERE server_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """
+            params = (server_id, limit)
+            
         with get_connection() as conn:
-            rows = conn.execute(sql, (limit,)).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in reversed(rows)]  # chronological order
     except Exception as exc:
         logger.exception("get_latest_metrics failed: %s", exc)
         return []
 
 
-def get_metrics_for_training(limit: int = 500) -> list[dict]:
-    """Return up to *limit* recent metrics for model training."""
-    sql = "SELECT * FROM metrics ORDER BY id DESC LIMIT ?"
+def get_metrics_for_training(limit: int = 500, server_id: int = None) -> list[dict]:
+    """Return up to *limit* recent metrics for model training on a specific server."""
     try:
+        if not server_id:
+            sql = "SELECT * FROM metrics WHERE server_id IS NULL OR server_id = 0 ORDER BY id DESC LIMIT ?"
+            params = (limit,)
+        else:
+            sql = "SELECT * FROM metrics WHERE server_id = ? ORDER BY id DESC LIMIT ?"
+            params = (server_id, limit)
+            
         with get_connection() as conn:
-            rows = conn.execute(sql, (limit,)).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
     except Exception as exc:
         logger.exception("get_metrics_for_training failed: %s", exc)
         return []
 
 
-def count_metrics() -> int:
-    """Return total number of metric readings stored."""
+def count_metrics(server_id: int = None) -> int:
+    """Return total number of metric readings stored for a specific server."""
     try:
+        if not server_id:
+            sql = "SELECT COUNT(*) as cnt FROM metrics WHERE server_id IS NULL OR server_id = 0"
+            params = ()
+        else:
+            sql = "SELECT COUNT(*) as cnt FROM metrics WHERE server_id = ?"
+            params = (server_id,)
+            
         with get_connection() as conn:
-            row = conn.execute("SELECT COUNT(*) as cnt FROM metrics").fetchone()
+            row = conn.execute(sql, params).fetchone()
             return row["cnt"]
     except Exception as exc:
         logger.exception("count_metrics failed: %s", exc)
@@ -151,14 +221,14 @@ def count_metrics() -> int:
 
 # ─── Anomalies ────────────────────────────────────────────────────────────────
 
-def insert_anomaly(metric_data: dict, score: float, severity: str) -> int:
+def insert_anomaly(metric_data: dict, score: float, severity: str, server_id: int = None) -> int:
     """
     Log a detected anomaly.
     Returns the new row id.
     """
     sql = """
-    INSERT INTO anomalies (timestamp, metric_values, anomaly_score, severity)
-    VALUES (datetime('now'), :metric_values, :anomaly_score, :severity)
+    INSERT INTO anomalies (timestamp, metric_values, anomaly_score, severity, server_id)
+    VALUES (datetime('now'), :metric_values, :anomaly_score, :severity, :server_id)
     """
     try:
         with get_connection() as conn:
@@ -166,6 +236,7 @@ def insert_anomaly(metric_data: dict, score: float, severity: str) -> int:
                 "metric_values": json.dumps(metric_data),
                 "anomaly_score": score,
                 "severity":      severity,
+                "server_id":     server_id,
             })
             return cursor.lastrowid
     except Exception as exc:
@@ -173,12 +244,18 @@ def insert_anomaly(metric_data: dict, score: float, severity: str) -> int:
         raise
 
 
-def get_anomalies(limit: int = 50) -> list[dict]:
-    """Return the most recent *limit* anomaly records."""
-    sql = "SELECT * FROM anomalies ORDER BY id DESC LIMIT ?"
+def get_anomalies(limit: int = 50, server_id: int = None) -> list[dict]:
+    """Return the most recent *limit* anomaly records for a specific server."""
     try:
+        if not server_id:
+            sql = "SELECT * FROM anomalies WHERE server_id IS NULL OR server_id = 0 ORDER BY id DESC LIMIT ?"
+            params = (limit,)
+        else:
+            sql = "SELECT * FROM anomalies WHERE server_id = ? ORDER BY id DESC LIMIT ?"
+            params = (server_id, limit)
+            
         with get_connection() as conn:
-            rows = conn.execute(sql, (limit,)).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
     except Exception as exc:
         logger.exception("get_anomalies failed: %s", exc)

@@ -96,8 +96,11 @@ async function apiFetch(path, options = {}) {
         headers: { "X-API-Key": CONFIG.apiKey, ...options.headers },
         ...options,
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return resp.json();
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        throw new Error(data.error || `HTTP ${resp.status}`);
+    }
+    return data;
 }
 
 // ─── Chart Initialisation ─────────────────────────────────────────────────────
@@ -248,13 +251,14 @@ function renderAnomalyTable(anomalies) {
 
     tbody.innerHTML = anomalies.slice(0, 30).map((a) => {
         const vals = safeParseJSON(a.metric_values);
+        const badgeClass = String(a.severity || "normal").toLowerCase().replace(/\s+/g, "-");
         return `
       <tr>
         <td>${formatTime(a.timestamp)}</td>
         <td>${vals ? vals.cpu?.toFixed(1) + "%" : "—"}</td>
         <td>${vals ? vals.ram?.toFixed(1) + "%" : "—"}</td>
         <td>${a.anomaly_score?.toFixed(4)}</td>
-        <td><span class="sev-badge ${a.severity}">${a.severity}</span></td>
+        <td><span class="sev-badge ${badgeClass}">${a.severity}</span></td>
       </tr>`;
     }).join("");
 }
@@ -277,18 +281,21 @@ function renderModelPanel(status) {
 // ─── Fetch & Refresh ─────────────────────────────────────────────────────────
 async function fetchAll() {
     try {
+        const sid = state.currentServerId || 0;
         const [metricRes, anomalyRes, statusRes] = await Promise.all([
-            apiFetch("/api/metrics/latest?limit=100"),
-            apiFetch("/api/anomalies?limit=50"),
-            apiFetch("/api/status"),
+            apiFetch(`/api/metrics/latest?limit=100${sid !== 0 ? `&server_id=${sid}` : ""}`),
+            apiFetch(`/api/anomalies?limit=50${sid !== 0 ? `&server_id=${sid}` : ""}`),
+            apiFetch(`/api/status?server_id=${sid}`),
         ]);
+
+        if (state.currentServerId !== sid) return;
 
         const metrics = metricRes.data || [];
         const anomalies = anomalyRes.data || [];
         const statusD = statusRes.data || {};
 
-        // First load: rebuild charts; subsequent: incremental
-        if (state.metrics.length === 0 && metrics.length > 0) {
+        // First load or server switch: rebuild charts; subsequent: incremental
+        if (state.metrics.length === 0 || metrics.length < state.metrics.length) {
             rebuildCharts(metrics);
         } else if (metrics.length > state.metrics.length) {
             const newOnes = metrics.slice(state.metrics.length);
@@ -308,7 +315,12 @@ async function fetchAll() {
         state.status = statusD;
 
         const latest = metrics[metrics.length - 1];
-        updateStatCards(latest);
+        if (latest) {
+            updateStatCards(latest);
+        } else {
+            clearStatCards();
+        }
+        
         updateStatusBadge(statusD);
         renderAnomalyTable(anomalies);
         renderModelPanel(statusD);
@@ -328,7 +340,8 @@ async function triggerRetrain() {
     btn.disabled = true;
     btn.innerHTML = `<span class="spinner"></span> Training…`;
     try {
-        const res = await apiFetch("/api/train", {
+        const sid = state.currentServerId || 0;
+        const res = await apiFetch(`/api/train?server_id=${sid}`, {
             method: "POST",
             headers: { "X-API-Key": CONFIG.apiKey },
         });
@@ -478,32 +491,10 @@ function safeParseJSON(str) {
     try { return JSON.parse(str); } catch { return null; }
 }
 
-// ─── Remote Servers Logic ─────────────────────────────────────────────────────
+// ─── State Switcher & Local Storage ──────────────────────────────────────────
 
 let storedServers = [];
-
-// Remote monitoring state -- password kept ONLY in JS memory, never stored
-const remote = {
-    active:      false,
-    serverId:    null,
-    serverName:  null,
-    serverIP:    null,
-    password:    null,      // cleared on disconnect
-    pollTimer:   null,
-    lastNetRx:   null,      // for per-interval rate calculation
-    lastNetTx:   null,
-    lastPollTs:  null,
-};
-
-async function loadServers() {
-    try {
-        const res = await apiFetch("/api/servers");
-        if (res.success && res.data) {
-            storedServers = res.data;
-            renderServerList();
-        }
-    } catch (err) { console.warn("Failed to load servers", err); }
-}
+state.currentServerId = 0; // default to local PC
 
 async function loadServers() {
     try {
@@ -524,199 +515,266 @@ function renderServerList() {
     const addBtn = el("btnAddServer");
     storedServers.forEach(srv => {
         const btn = document.createElement("button");
-        // Highlight the currently monitored server
-        const isActive = remote.active && remote.serverId === srv.id;
+        const isActive = state.currentServerId === srv.id;
         btn.className = "cloud-btn dyn-server-btn" + (isActive ? " active" : "");
         btn.id = "srvBtn" + srv.id;
         btn.title = srv.ip + ":" + (srv.port || 22);
         btn.innerHTML = `<span class="cloud-icon">🖥️</span> ${srv.name}` +
             (isActive ? ` <span class="badge">Live</span>` : "");
-        btn.onclick = () => {
-            // If already monitoring this server, just show a toast
-            if (remote.active && remote.serverId === srv.id) {
-                showToast(`Already monitoring ${srv.name}`, "warning");
-                return;
+        
+        btn.onclick = async () => {
+            try {
+                const statusRes = await apiFetch(`/api/status?server_id=${srv.id}`);
+                const statusD = statusRes.data || {};
+                
+                if (statusD.status === "unknown" || statusD.status === "starting") {
+                    el("connServerId").value = srv.id;
+                    el("connServerName").textContent = `${srv.name}  (${srv.ip})`;
+                    el("connPassword").value = "";
+                    el("passwordModal").classList.add("open");
+                    setTimeout(() => el("connPassword")?.focus(), 100);
+                } else {
+                    if (state.currentServerId === srv.id) {
+                        showToast(`Already viewing ${srv.name}`, "warning");
+                        return;
+                    }
+                    switchServer(srv.id);
+                }
+            } catch (err) {
+                el("connServerId").value = srv.id;
+                el("connServerName").textContent = `${srv.name}  (${srv.ip})`;
+                el("connPassword").value = "";
+                el("passwordModal").classList.add("open");
+                setTimeout(() => el("connPassword")?.focus(), 100);
             }
-            el("connServerId").value = srv.id;
-            el("connServerName").textContent = `${srv.name}  (${srv.ip})`;
-            el("connPassword").value = "";
-            el("passwordModal").classList.add("open");
-            // Focus the password field
-            setTimeout(() => el("connPassword")?.focus(), 100);
         };
         container.insertBefore(btn, addBtn);
     });
 }
 
-// ─── Continuous remote monitoring ───────────────────────────────────────────
-
-function startRemoteMonitoring(serverId, serverName, password) {
-    // Stop local polling first
-    clearInterval(state.polling);
-    state.polling = null;
-
-    // Stop any existing remote polling
-    if (remote.pollTimer) clearInterval(remote.pollTimer);
-
-    // Store session state (password in memory only)
-    remote.active     = true;
-    remote.serverId   = serverId;
-    remote.serverName = serverName;
-    remote.password   = password;
-    remote.lastNetRx  = null;
-    remote.lastNetTx  = null;
-    remote.lastPollTs = null;
-
-    // Show disconnect banner
-    showRemoteBanner(serverName);
-    // Highlight active button
-    renderServerList();
-
-    // Immediate first fetch, then repeat
-    pollRemoteServer();
-    remote.pollTimer = setInterval(pollRemoteServer, CONFIG.pollInterval);
+async function switchServer(serverId) {
+    serverId = parseInt(serverId);
+    state.currentServerId = serverId;
+    
+    const tabTerm = el("tabTerminal");
+    const btnDisc = el("btnDisconnectServer");
+    
+    if (serverId === 0) {
+        if (tabTerm) tabTerm.style.display = "none";
+        if (btnDisc) btnDisc.style.display = "none";
+        switchView("dashboard");
+    } else {
+        if (tabTerm) tabTerm.style.display = "inline-block";
+        if (btnDisc) btnDisc.style.display = "inline-block";
+    }
+    
+    // Highlight active VPS button
+    qsa(".dyn-server-btn").forEach(btn => {
+        btn.classList.remove("active");
+        if (btn.id === `srvBtn${serverId}`) {
+            btn.classList.add("active");
+        }
+    });
+    
+    const localBtn = el("btnVPS");
+    if (localBtn) {
+        if (serverId === 0) localBtn.classList.add("active");
+        else localBtn.classList.remove("active");
+    }
+    
+    state.metrics = [];
+    state.anomalies = [];
+    
+    await fetchAll();
+    resetTerminal();
 }
 
-async function pollRemoteServer() {
-    if (!remote.active) return;
+async function disconnectActiveServer() {
+    const sid = state.currentServerId;
+    if (sid === 0) return;
+    
     try {
-        const res = await apiFetch("/api/server/connect", {
+        const res = await apiFetch("/api/server/disconnect", {
             method: "POST",
-            body: JSON.stringify({
-                server_id: remote.serverId,
-                password:  remote.password,
-            }),
+            body: JSON.stringify({ server_id: sid }),
         });
-
-        if (!res.success) {
-            showToast("Remote poll failed: " + (res.error || "unknown"), "error");
-            return;
+        if (res.success) {
+            showToast(`Server disconnected.`, "success");
+            switchServer(0);
+        } else {
+            showToast(res.error || "Disconnect failed", "error");
         }
-
-        const now = Date.now();
-        const m   = res.metrics;
-
-        // Calculate network rate (bytes/s) from cumulative /proc/net/dev counters
-        let netIn = 0, netOut = 0;
-        if (remote.lastNetRx !== null && remote.lastPollTs !== null) {
-            const dtSec = (now - remote.lastPollTs) / 1000;
-            netIn  = Math.max(0, (res.net_rx_bytes - remote.lastNetRx) / dtSec);
-            netOut = Math.max(0, (res.net_tx_bytes - remote.lastNetTx) / dtSec);
-        }
-        remote.lastNetRx  = res.net_rx_bytes;
-        remote.lastNetTx  = res.net_tx_bytes;
-        remote.lastPollTs = now;
-
-        // Build full metric object with calculated network rates
-        const fullMetric = {
-            ...m,
-            network_in:  netIn,
-            network_out: netOut,
-        };
-
-        // Push to all charts
-        const label = formatTime(m.timestamp);
-        pushToChart("chartCPU",    label, m.cpu);
-        pushToChart("chartRAM",    label, m.ram);
-        pushToChart("chartDisk",   label, m.disk);
-        pushToChart("chartNetIn",  label, netIn);
-        pushToChart("chartNetOut", label, netOut);
-        pushToChart("chartProcs",  label, m.processes);
-        Object.values(charts).forEach(ch => ch.update("none"));
-
-        // Update stat cards
-        updateStatCards(fullMetric);
-
-        // Update header server info
-        const sn = el("headerServerName");
-        const si = el("headerServerIP");
-        if (sn) sn.textContent = res.server_name;
-        if (si) si.textContent = res.server_ip;
-        const lu = el("lastUpdated");
-        if (lu) lu.textContent = "Updated: " + formatTime(m.timestamp);
-
-        // Update status badge
-        const is_anomaly = res.prediction.is_anomaly;
-        const s = is_anomaly ? "anomaly" : "normal";
-        const badge = el("statusBadge");
-        const text  = el("statusText");
-        if (badge) badge.className = `status-badge ${s}`;
-        if (text)  text.textContent = `Remote • ${s.charAt(0).toUpperCase() + s.slice(1)}`;
-
-        if (is_anomaly) {
-            document.body.classList.add("anomaly-flash");
-            setTimeout(() => document.body.classList.remove("anomaly-flash"), 1200);
-        }
-
     } catch (err) {
-        showToast("Remote poll error: " + err.message, "error");
-        console.error("pollRemoteServer:", err);
+        showToast("Disconnect error: " + err.message, "error");
     }
 }
 
-function disconnectRemote() {
-    // Clear credentials from memory
-    clearInterval(remote.pollTimer);
-    remote.active     = false;
-    remote.serverId   = null;
-    remote.serverName = null;
-    remote.password   = null;   // wipe password
-    remote.lastNetRx  = null;
-    remote.lastNetTx  = null;
-    remote.pollTimer  = null;
+// ─── WebSocket Metrics Broadcaster Client ─────────────────────────────────────
 
-    // Hide disconnect banner
-    hideRemoteBanner();
-    renderServerList();
-
-    // Reset header to local server
-    const sn = el("headerServerName");
-    const si = el("headerServerIP");
-    if (sn) sn.textContent = "Local";
-    if (si) si.textContent = "";
-
-    // Resume local polling
-    fetchAll();
-    state.polling = setInterval(fetchAll, CONFIG.pollInterval);
-    showToast("Disconnected. Resumed local monitoring.", "success");
-}
-
-// Remote banner (shown in header when a VPS is being monitored)
-function showRemoteBanner(name) {
-    let banner = el("remoteBanner");
-    if (!banner) {
-        banner = document.createElement("div");
-        banner.id = "remoteBanner";
-        banner.style.cssText = [
-            "display:flex","align-items:center","gap:10px",
-            "padding:6px 16px",
-            "background:rgba(59,130,246,0.15)",
-            "border:1px solid rgba(59,130,246,0.35)",
-            "border-radius:999px",
-            "font-size:0.82rem",
-            "font-weight:600",
-            "color:#93c5fd",
-            "margin:0 8px",
-        ].join(";");
-        // Insert after header
-        const header = document.querySelector(".header");
-        if (header) header.insertAdjacentElement("afterend", banner);
+let metricsWS = null;
+function initMetricsWebSocket() {
+    if (metricsWS) {
+        try { metricsWS.close(); } catch(_) {}
     }
-    banner.innerHTML =
-        `<span style="animation:pulse-dot 2s infinite;display:inline-block;width:8px;height:8px;border-radius:50%;background:#3b82f6"></span>` +
-        `Monitoring <strong style="color:#f1f5f9;margin:0 4px">${name}</strong> via SSH` +
-        `<button onclick="disconnectRemote()" style="margin-left:12px;padding:3px 10px;border:1px solid rgba(239,68,68,0.4);` +
-        `border-radius:999px;background:rgba(239,68,68,0.15);color:#f87171;cursor:pointer;font-size:0.75rem;font-family:inherit">` +
-        `Disconnect</button>`;
-    banner.style.display = "flex";
+    
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${proto}//${window.location.host}/ws/metrics`;
+    
+    metricsWS = new WebSocket(wsUrl);
+    
+    metricsWS.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (parseInt(data.server_id) === state.currentServerId) {
+                const m = data.metrics;
+                const label = formatTime(m.timestamp);
+                
+                state.metrics.push(m);
+                if (state.metrics.length > CONFIG.maxPoints) {
+                    state.metrics.shift();
+                }
+                
+                pushToChart("chartCPU", label, m.cpu);
+                pushToChart("chartRAM", label, m.ram);
+                pushToChart("chartDisk", label, m.disk);
+                pushToChart("chartNetIn", label, m.network_in);
+                pushToChart("chartNetOut", label, m.network_out);
+                pushToChart("chartProcs", label, m.processes);
+                Object.values(charts).forEach(ch => ch.update("none"));
+                
+                updateStatCards(m);
+                fetchAll(); // Sync remaining database components (anomalies list, etc.)
+            }
+        } catch(e) {
+            console.error("WS metrics handling error:", e);
+        }
+    };
+    
+    metricsWS.onclose = () => {
+        setTimeout(initMetricsWebSocket, 5000);
+    };
 }
 
-function hideRemoteBanner() {
-    const banner = el("remoteBanner");
-    if (banner) banner.style.display = "none";
+// ─── xterm.js Web Terminal Logic ──────────────────────────────────────────────
+
+let terminalObj = null;
+let terminalWS = null;
+let terminalResizeListener = null;
+
+function resetTerminal() {
+    if (terminalResizeListener) {
+        window.removeEventListener("resize", terminalResizeListener);
+        terminalResizeListener = null;
+    }
+    if (terminalWS) {
+        try { terminalWS.close(); } catch(_) {}
+        terminalWS = null;
+    }
+    const termDiv = el("terminal");
+    if (termDiv) termDiv.innerHTML = "";
+    terminalObj = null;
 }
 
-// ─── Form handlers ───────────────────────────────────────────────────────────
+function initTerminal() {
+    if (state.currentServerId === 0) return;
+    
+    // Always start with a clean session to prevent stuck dead terminal states
+    resetTerminal();
+    
+    const termDiv = el("terminal");
+    if (!termDiv) return;
+    
+    terminalObj = new Terminal({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: "'JetBrains Mono', monospace",
+        theme: {
+            background: "#0b0f19",
+            foreground: "#f1f5f9",
+            cursor: "#3b82f6",
+        }
+    });
+    
+    const fitAddon = new FitAddon.FitAddon();
+    terminalObj.loadAddon(fitAddon);
+    
+    terminalObj.open(termDiv);
+    
+    // Use a small delay to make sure container layout is complete before fitting
+    setTimeout(() => {
+        try { fitAddon.fit(); } catch(e) { console.error("xterm fit error", e); }
+    }, 150);
+    
+    terminalResizeListener = () => {
+        try { fitAddon.fit(); } catch(_) {}
+    };
+    window.addEventListener("resize", terminalResizeListener);
+    
+    terminalObj.write("Connecting to remote shell session...\r\n");
+    
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${proto}//${window.location.host}/ws/terminal?server_id=${state.currentServerId}`;
+    
+    terminalWS = new WebSocket(wsUrl);
+    
+    terminalWS.onopen = () => {
+        terminalObj.write("Connected to shell! Initializing interactive SSH session...\r\n\r\n");
+    };
+    
+    terminalWS.onmessage = (event) => {
+        terminalObj.write(event.data);
+    };
+    
+    terminalWS.onclose = () => {
+        terminalObj.write("\r\nSession closed by remote server.\r\n");
+    };
+    
+    terminalWS.onerror = (err) => {
+        terminalObj.write(`\r\nConnection error: ${err.message}\r\n`);
+    };
+    
+    terminalObj.onData((data) => {
+        if (terminalWS && terminalWS.readyState === WebSocket.OPEN) {
+            terminalWS.send(data);
+        }
+    });
+}
+
+function switchView(viewName) {
+    const tabDash = el("tabDashboard");
+    const tabTerm = el("tabTerminal");
+    const dashView = el("dashboardView");
+    const termCont = el("terminalContainer");
+    
+    if (viewName === "dashboard") {
+        if (dashView) dashView.style.display = "block";
+        if (termCont) termCont.style.display = "none";
+        
+        tabDash.classList.add("active");
+        tabTerm.classList.remove("active");
+    } else if (viewName === "terminal") {
+        if (dashView) dashView.style.display = "none";
+        if (termCont) termCont.style.display = "block";
+        
+        tabDash.classList.remove("active");
+        tabTerm.classList.add("active");
+        
+        initTerminal();
+    }
+}
+
+function clearStatCards() {
+    const ids = ["valCPU", "valRAM", "valDisk", "valNetIn", "valNetOut", "valProcs", "valUptime", "liveCPU", "liveRAM", "liveDisk", "liveNetIn", "liveNetOut", "liveProcs"];
+    ids.forEach(id => {
+        const elem = el(id);
+        if (elem) elem.textContent = "—";
+    });
+    updateRing("ringCPU", 0);
+    updateRing("ringRAM", 0);
+    updateRing("ringDisk", 0);
+}
+
+// ─── Form & Event Handlers ────────────────────────────────────────────────────
 
 function handleAddServerSubmit(e) {
     e.preventDefault();
@@ -751,12 +809,10 @@ function handlePasswordSubmit(e) {
     const btn      = el("passwordSubmitBtn");
     const serverId = parseInt(el("connServerId").value);
     const password = el("connPassword").value;
-    const srv      = storedServers.find(s => s.id === serverId);
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Connecting...';
 
-    // Test connection with one fetch, then start continuous polling on success
     apiFetch("/api/server/connect", {
         method: "POST",
         body: JSON.stringify({ server_id: serverId, password }),
@@ -764,9 +820,8 @@ function handlePasswordSubmit(e) {
     .then(res => {
         if (res.success) {
             el("passwordModal").classList.remove("open");
-            showToast(`Connected to ${res.server_name}! Polling every 10s...`, "success");
-            // Hand off to continuous polling
-            startRemoteMonitoring(serverId, res.server_name, password);
+            showToast(`Connected to ${res.server_name}! Persistent monitoring active.`, "success");
+            switchServer(serverId);
         } else {
             showToast(res.error || "Connection failed", "error");
         }
@@ -780,6 +835,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initAllCharts();
     fetchAll();
     state.polling = setInterval(fetchAll, CONFIG.pollInterval);
+    initMetricsWebSocket();
 
     el("retrainBtn")?.addEventListener("click", triggerRetrain);
 
@@ -789,10 +845,14 @@ document.addEventListener("DOMContentLoaded", () => {
     el("cloudModal")?.addEventListener("click", (e) => {
         if (e.target === el("cloudModal")) closeModal();
     });
+    
     document.querySelectorAll("[data-cloud]").forEach((btn) => {
         btn.addEventListener("click", () => {
             const p = btn.dataset.cloud;
-            if (p === "vps") showToast("✅ Local VPS Agent is active.", "success");
+            if (p === "vps") {
+                switchServer(0);
+                showToast("Resumed Local PC monitoring.", "success");
+            }
             else openModal(p);
         });
     });
@@ -806,6 +866,15 @@ document.addEventListener("DOMContentLoaded", () => {
     // Password modal
     el("passwordCloseBtn")?.addEventListener("click", () =>
         el("passwordModal").classList.remove("open"));
+
+    // Tabs & views switcher
+    el("tabDashboard")?.addEventListener("click", () => switchView("dashboard"));
+    el("tabTerminal")?.addEventListener("click", () => switchView("terminal"));
+    el("btnTerminalReset")?.addEventListener("click", () => {
+        resetTerminal();
+        initTerminal();
+    });
+    el("btnDisconnectServer")?.addEventListener("click", disconnectActiveServer);
 
     // Form submissions
     el("addServerForm")?.addEventListener("submit", handleAddServerSubmit);

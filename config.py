@@ -66,6 +66,44 @@ THRESHOLD_LOW    = -0.1   # score < this → Low anomaly
 THRESHOLD_MEDIUM = -0.3   # score < this → Medium anomaly
 THRESHOLD_HIGH   = -0.5   # score < this → High anomaly
 
+# ─── Custom Hardware Thresholds ──────────────────────────────────────────────
+CPU_MODERATE       = float(os.getenv("CPU_MODERATE", 70.0))
+CPU_HIGH           = float(os.getenv("CPU_HIGH", 85.0))
+CPU_DANGER         = float(os.getenv("CPU_DANGER", 95.0))
+
+RAM_MODERATE       = float(os.getenv("RAM_MODERATE", 80.0))
+RAM_HIGH           = float(os.getenv("RAM_HIGH", 90.0))
+RAM_DANGER         = float(os.getenv("RAM_DANGER", 95.0))
+
+DISK_MODERATE      = float(os.getenv("DISK_MODERATE", 70.0))
+DISK_HIGH          = float(os.getenv("DISK_HIGH", 85.0))
+DISK_DANGER        = float(os.getenv("DISK_DANGER", 95.0))
+
+LOAD_MODERATE      = float(os.getenv("LOAD_MODERATE", 0.70))
+LOAD_HIGH          = float(os.getenv("LOAD_HIGH", 0.85))
+LOAD_DANGER        = float(os.getenv("LOAD_DANGER", 1.0))
+
+NET_SPIKE_MODERATE = float(os.getenv("NET_SPIKE_MODERATE", 5000000.0))
+NET_SPIKE_HIGH     = float(os.getenv("NET_SPIKE_HIGH", 20000000.0))
+NET_SPIKE_DANGER   = float(os.getenv("NET_SPIKE_DANGER", 50000000.0))
+
+PROCESS_DROP_MODERATE = float(os.getenv("PROCESS_DROP_MODERATE", 5.0))
+PROCESS_DROP_HIGH     = float(os.getenv("PROCESS_DROP_HIGH", 15.0))
+PROCESS_DROP_DANGER   = float(os.getenv("PROCESS_DROP_DANGER", 30.0))
+
+# ─── Alert Suppressor Settings ───────────────────────────────────────────────
+ALERT_CONSECUTIVE_MIN  = int(os.getenv("ALERT_CONSECUTIVE_MIN", 2))
+ALERT_COOLDOWN_MINUTES = int(os.getenv("ALERT_COOLDOWN_MINUTES", 5))
+
+# ─── Telegram Alerts Settings ────────────────────────────────────────────────
+TELEGRAM_ENABLED   = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# ─── Auto-Remediation Settings ────────────────────────────────────────────────
+REMEDIATION_ENABLED  = os.getenv("REMEDIATION_ENABLED", "false").lower() == "true"
+REMEDIATION_SERVICES = os.getenv("REMEDIATION_SERVICES", "nginx,apache2,mysql,postgresql")
+
 # ─── Dashboard ───────────────────────────────────────────────────────────────
 DASHBOARD_POLL_INTERVAL_MS = int(os.getenv("DASHBOARD_POLL_MS", 10000))  # 10 s
 MAX_CHART_POINTS           = int(os.getenv("MAX_CHART_POINTS", 100))

@@ -1,138 +1,134 @@
 """
 ================================================================================
-hybrid_pipeline.py — Hybrid Anomaly Detection Pipeline
-Project : AI-Based Anomaly Detection System for Cloud Resource Monitoring
+hybrid_pipeline.py — Feature Engineering + Hybrid Classification (AIOps Edition)
+Project : Smart Cloud Pulse AI Monitor
 Org     : NTPL Digital Private Limited, Noida
 Group   : CU - MCA - Group-4
 --------------------------------------------------------------------------------
-This module implements a hybrid anomaly detection pipeline combining:
-  1. Data Preprocessing & Feature Engineering (Relative Distance Metrics)
-  2. A Rule-Based metrics gate for multi-class severity mapping (classify_vps_situation)
+This module does two things:
+
+1. preprocess_features(metric, trend)
+   Converts raw metric values + trend delta/averages into a richer feature
+   vector that the Isolation Forest model can learn from more effectively.
+
+   Core technique — "Distance to Danger":
+     cpu_distance_to_danger = 100 - cpu
+     ram_distance_to_danger = 100 - ram
+   Safe idle states cluster at high values (easy for Isolation Forest to
+   confirm as normal). Dangerous states approach 0 (become isolated outliers).
+
+   Trend features add temporal awareness:
+   - Delta features: catch sudden spikes/drops even when absolute levels are OK.
+   - Rolling averages: provide a stable baseline context.
+
+2. classify_vps_situation(cpu, ram, load_avg_1m, cpu_cores, ai_score)
+   A 4-level severity classifier that combines hard thresholds with the AI
+   score. Thresholds are fully configurable via .env.
 ================================================================================
 """
 
 import sys
+import os
 from typing import Dict, Any
 
-# ─── Feature Engineering Explanation ──────────────────────────────────────────
-# Unsupervised algorithms (such as Isolation Forest) isolate outliers by randomly
-# partitioning feature dimensions. When training on raw CPU/RAM (0% to 100%),
-# normal idle behaviors (e.g. CPU minor jumps between 2% and 15%) can sometimes
-# appear statistically sparse and cause false positive alerts.
-#
-# By transforming raw utilization into "Distance to Danger" metrics:
-#   CPU_Distance_To_Danger = 100.0 - Current_CPU
-#   RAM_Distance_To_Danger = 100.0 - Current_RAM
-#
-# Safe, idle states result in large values (close to 100) that form dense clusters.
-# In an Isolation Forest, these dense clusters require many partitions (splits)
-# to isolate, resulting in highly "normal" anomaly scores (close to 1.0).
-# Conversely, dangerous resource consumption states approach 0, becoming highly
-# isolated in the feature space and flagging them as statistical anomalies,
-# while ignoring minor low-end fluctuations.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import (
+    CPU_MODERATE, CPU_HIGH, CPU_DANGER,
+    RAM_MODERATE, RAM_HIGH, RAM_DANGER,
+    LOAD_MODERATE, LOAD_HIGH, LOAD_DANGER,
+)
 
 
-def preprocess_features(metric: Dict[str, Any]) -> Dict[str, Any]:
+# ─── Feature Preprocessing ───────────────────────────────────────────────────
+
+def preprocess_features(metric: Dict[str, Any],
+                         trend: Dict[str, Any] = None) -> Dict[str, Any]:
     """
-    Preprocess raw metrics by calculating relative distance to danger metrics.
-    
+    Build the full feature dict used by the Isolation Forest.
+
     Args:
-        metric: Dictionary containing raw 'cpu' and 'ram' percentage keys.
-        
+        metric : raw metric snapshot (cpu, ram, disk, network_in, …)
+        trend  : output of trend_engine.get_trend_features() — optional.
+                 When None (first reading, no history yet), trend features
+                 are all set to 0.
+
     Returns:
-        A new dictionary with 'cpu_distance_to_danger' and 'ram_distance_to_danger'.
+        Processed dict containing both engineered and trend features.
     """
+    if trend is None:
+        trend = {}
+
     cpu = float(metric.get("cpu", 0.0))
     ram = float(metric.get("ram", 0.0))
-    
+
     processed = metric.copy()
+
+    # ── Distance-to-danger transformation ────────────────────────────────────
+    # Idle states → high values (dense cluster → model says "normal")
+    # High utilisation → near zero (isolated point → model says "anomaly")
     processed["cpu_distance_to_danger"] = max(0.0, 100.0 - cpu)
     processed["ram_distance_to_danger"] = max(0.0, 100.0 - ram)
+
+    # ── Merge trend features (default 0 when unavailable) ────────────────────
+    processed["cpu_delta"]       = trend.get("cpu_delta",       0.0)
+    processed["ram_delta"]       = trend.get("ram_delta",       0.0)
+    processed["disk_delta"]      = trend.get("disk_delta",      0.0)
+    processed["process_delta"]   = trend.get("process_delta",   0.0)
+    processed["net_in_delta"]    = trend.get("net_in_delta",    0.0)
+    processed["net_out_delta"]   = trend.get("net_out_delta",   0.0)
+    processed["cpu_5min_avg"]    = trend.get("cpu_5min_avg",    cpu)
+    processed["ram_5min_avg"]    = trend.get("ram_5min_avg",    ram)
+    processed["net_in_5min_avg"] = trend.get("net_in_5min_avg", float(metric.get("network_in",  0)))
+    processed["proc_5min_avg"]   = trend.get("proc_5min_avg",   float(metric.get("processes",   0)))
+
     return processed
 
+
+# ─── Severity Classifier ─────────────────────────────────────────────────────
 
 def classify_vps_situation(
     cpu: float,
     ram: float,
     load_avg_1m: float,
     cpu_cores: int,
-    ai_score: float
+    ai_score: float,
 ) -> str:
     """
-    Determine the final system state based on hardware metrics, load ratio,
-    and the AI model's continuous anomaly score.
-    
+    Determine the final system state using a hybrid approach:
+      - Hard thresholds (configurable via .env) are checked first
+      - AI anomaly score acts as a fallback "sneaky anomaly" detector
+
+    The AI fallback catches situations where hardware metrics look fine
+    but the overall statistical pattern is unusual (e.g. service crash
+    causing both CPU and process count to drop simultaneously).
+
     Args:
-        cpu: Raw CPU utilization percentage (0.0 to 100.0).
-        ram: Raw RAM utilization percentage (0.0 to 100.0).
-        load_avg_1m: 1-minute system load average.
-        cpu_cores: Number of CPU cores available on the system.
-        ai_score: Continuous anomaly score from Isolation Forest (-1.0 to 1.0).
-        
+        cpu         : CPU utilisation % (0–100)
+        ram         : RAM utilisation % (0–100)
+        load_avg_1m : 1-minute system load average
+        cpu_cores   : number of logical CPU cores
+        ai_score    : Isolation Forest score_samples() value
+
     Returns:
-        Final state: 'Danger', 'High Anomaly', 'Moderate Anomaly', or 'Normal'.
+        One of: "Normal", "Moderate Anomaly", "High Anomaly", "Danger"
     """
-    # 1. Calculate Load Ratio
     load_ratio = load_avg_1m / cpu_cores if cpu_cores > 0 else 0.0
-    
-    # 2. Danger / Critical State Check
-    if cpu >= 95.0 or load_ratio >= 1.0 or ram >= 95.0:
+
+    # Danger / Critical
+    if cpu >= CPU_DANGER or load_ratio >= LOAD_DANGER or ram >= RAM_DANGER:
         return "Danger"
-        
-    # 3. High Anomaly State Check
-    if cpu >= 85.0 or load_ratio >= 0.85 or ram >= 90.0:
+
+    # High Anomaly
+    if cpu >= CPU_HIGH or load_ratio >= LOAD_HIGH or ram >= RAM_HIGH:
         return "High Anomaly"
-        
-    # 4. Moderate Anomaly State Check
-    if cpu >= 70.0 or load_ratio >= 0.70 or ram >= 80.0:
+
+    # Moderate Anomaly
+    if cpu >= CPU_MODERATE or load_ratio >= LOAD_MODERATE or ram >= RAM_MODERATE:
         return "Moderate Anomaly"
-        
-    # 5. AI Anomaly Fallback (The Sneaky Anomaly Catcher)
-    # Detects situations like sudden service crashes (e.g. CPU dropping to 0%
-    # or unusual process counts) while hardware utilization is safe.
+
+    # AI Anomaly Fallback — catches "sneaky" anomalies:
+    # e.g. CPU at 5% but process count collapsed, which the IF model flags
     if ai_score <= -0.75:
         return "Moderate Anomaly"
-        
-    # 6. Normal State
+
     return "Normal"
-
-
-# ─── Mock Data Test ───────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    print("======================================================================")
-    print("Running Mock Data Test for Hybrid Anomaly Pipeline")
-    print("======================================================================\n")
-    
-    # Mock CPU cores
-    cores = 4
-    
-    # Test cases: (name, cpu, ram, load_1m, ai_score)
-    test_cases = [
-        ("Idle Server (Normal)", 4.0, 35.0, 0.2, 0.45),
-        ("Server in Danger State (High CPU)", 96.0, 60.0, 2.5, -0.65),
-        ("Server in Danger State (High Load)", 45.0, 50.0, 4.2, -0.40),
-        ("Server in Danger State (High RAM)", 50.0, 97.0, 1.1, -0.55),
-        ("High Anomaly State (CPU Spike)", 88.0, 75.0, 3.1, -0.70),
-        ("Moderate Anomaly State (RAM Leak)", 60.0, 82.0, 1.5, -0.60),
-        ("Sneaky AI Anomaly (Hardware Safe, but AI detected crash)", 0.0, 35.0, 0.05, -0.82),
-    ]
-    
-    for name, cpu, ram, load, ai_score in test_cases:
-        # Show feature preprocessing
-        raw_metrics = {"cpu": cpu, "ram": ram}
-        preprocessed = preprocess_features(raw_metrics)
-        
-        # Get hybrid classification
-        state = classify_vps_situation(
-            cpu=cpu,
-            ram=ram,
-            load_avg_1m=load,
-            cpu_cores=cores,
-            ai_score=ai_score
-        )
-        
-        print(f"Scenario: {name}")
-        print(f"  -> Raw Input: CPU={cpu}%, RAM={ram}%, Load={load} (Cores={cores}), AI Score={ai_score}")
-        print(f"  -> Engineered Features: CPU_Dist={preprocessed['cpu_distance_to_danger']}, RAM_Dist={preprocessed['ram_distance_to_danger']}")
-        print(f"  -> Hybrid Pipeline Result: **{state}**")
-        print("-" * 70)

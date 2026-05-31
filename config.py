@@ -108,14 +108,22 @@ REMEDIATION_SERVICES = os.getenv("REMEDIATION_SERVICES", "nginx,apache2,mysql,po
 DASHBOARD_POLL_INTERVAL_MS = int(os.getenv("DASHBOARD_POLL_MS", 10000))  # 10 s
 MAX_CHART_POINTS           = int(os.getenv("MAX_CHART_POINTS", 100))
 
-# ─── Alerts ──────────────────────────────────────────────────────────────────
-ALERT_EMAIL_ENABLED  = os.getenv("ALERT_EMAIL_ENABLED", "false").lower() == "true"
-ALERT_EMAIL_FROM     = os.getenv("ALERT_EMAIL_FROM", "alerts@yourcompany.com")
-ALERT_EMAIL_TO       = os.getenv("ALERT_EMAIL_TO", "admin@yourcompany.com")
+# ─── Alerts & SMTP Configuration ─────────────────────────────────────────────
+SMTP_ENABLED         = os.getenv("SMTP_ENABLED", os.getenv("ALERT_EMAIL_ENABLED", "false")).lower() == "true"
 SMTP_HOST            = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT            = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER            = os.getenv("SMTP_USER", "")
+SMTP_USERNAME        = os.getenv("SMTP_USERNAME", os.getenv("SMTP_USER", ""))
 SMTP_PASSWORD        = os.getenv("SMTP_PASSWORD", "")
+SMTP_USE_TLS         = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+
+ALERT_SENDER_EMAIL   = os.getenv("ALERT_SENDER_EMAIL", os.getenv("ALERT_EMAIL_FROM", "alerts@yourcompany.com"))
+ALERT_RECEIVER_EMAIL = os.getenv("ALERT_RECEIVER_EMAIL", os.getenv("ALERT_EMAIL_TO", "admin@yourcompany.com"))
+
+EMAIL_TIMEOUT_SECONDS         = int(os.getenv("EMAIL_TIMEOUT_SECONDS", 20))
+EMAIL_SUBJECT_PREFIX          = os.getenv("EMAIL_SUBJECT_PREFIX", "[Smart Cloud Pulse]")
+EMAIL_INCLUDE_RAW_METRICS     = os.getenv("EMAIL_INCLUDE_RAW_METRICS", "true").lower() == "true"
+EMAIL_INCLUDE_AI_DETAILS      = os.getenv("EMAIL_INCLUDE_AI_DETAILS", "true").lower() == "true"
+EMAIL_INCLUDE_RECOMMENDATIONS = os.getenv("EMAIL_INCLUDE_RECOMMENDATIONS", "true").lower() == "true"
 
 ALERT_WEBHOOK_ENABLED = os.getenv("ALERT_WEBHOOK_ENABLED", "false").lower() == "true"
 ALERT_WEBHOOK_URL     = os.getenv("ALERT_WEBHOOK_URL", "")

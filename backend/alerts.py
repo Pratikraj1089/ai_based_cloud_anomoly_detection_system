@@ -26,9 +26,10 @@ from datetime                 import datetime
 import requests as req  # 'requests' library
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
 from config import (
-    ALERT_EMAIL_ENABLED, ALERT_EMAIL_FROM, ALERT_EMAIL_TO,
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
+    SMTP_ENABLED, ALERT_SENDER_EMAIL, ALERT_RECEIVER_EMAIL,
+    SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD,
     ALERT_WEBHOOK_ENABLED, ALERT_WEBHOOK_URL,
     SERVER_NAME, SERVER_IP,
 )
@@ -92,11 +93,36 @@ def _send_all(alert_id, message: str, severity: str, score: float, metric: dict)
     """Run all channels; update DB status to 'sent' or 'failed'."""
     success = True
 
-    if ALERT_EMAIL_ENABLED:
-        ok = _send_email(message, severity)
-        if not ok:
+    # 1. SMTP Email Alerts
+    if config.SMTP_ENABLED:
+        try:
+            from backend.email_alerts import send_alert_email
+            from backend.trend_engine import get_trend_features
+            from backend.explainer import explain
+            from backend.root_cause import classify_root_cause
+            
+            server_id = metric.get("server_id", 0)
+            trend = get_trend_features(server_id, metric)
+            reasons = explain(metric, trend, {"score": score})
+            consec_ram = trend.get("consecutive_ram_increases", 0)
+            probable_cause = classify_root_cause(metric, trend, consec_ram)
+            
+            ok = send_alert_email(
+                server_id=server_id,
+                severity=severity,
+                score=score,
+                metric=metric,
+                trend=trend,
+                reasons=reasons,
+                probable_cause=probable_cause
+            )
+            if not ok:
+                success = False
+        except Exception as exc:
+            logger.exception("Email alert dispatch crashed: %s", exc)
             success = False
 
+    # 2. Webhook Alerts
     if ALERT_WEBHOOK_ENABLED and ALERT_WEBHOOK_URL:
         ok = _send_webhook(severity, score, metric, message)
         if not ok:
@@ -111,59 +137,6 @@ def _send_all(alert_id, message: str, severity: str, score: float, metric: dict)
             update_alert_status(alert_id, status)
         except Exception as exc:
             logger.error("Could not update alert status: %s", exc)
-
-
-# ─── Email Channel ───────────────────────────────────────────────────────────
-
-def _send_email(message: str, severity: str) -> bool:
-    """
-    Send an alert email via SMTP.
-    Returns True on success, False on failure.
-    """
-    try:
-        subject = f"🚨 Cloud Anomaly Alert — {severity.upper()} | {SERVER_NAME}"
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = ALERT_EMAIL_FROM
-        msg["To"]      = ALERT_EMAIL_TO
-
-        # Plain text part
-        msg.attach(MIMEText(message, "plain"))
-
-        # HTML part for nicer rendering
-        html_body = _build_html_email(message, severity)
-        msg.attach(MIMEText(html_body, "html"))
-
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(ALERT_EMAIL_FROM, ALERT_EMAIL_TO, msg.as_string())
-
-        logger.info("Alert email sent to %s", ALERT_EMAIL_TO)
-        return True
-
-    except Exception as exc:
-        logger.error("Email alert failed: %s", exc)
-        return False
-
-
-def _build_html_email(plain_text: str, severity: str) -> str:
-    """Create a minimal HTML version of the alert email."""
-    color = {"low": "#f0ad4e", "medium": "#d9534f", "high": "#c0392b"}.get(severity, "#555")
-    lines = plain_text.replace("\n", "<br>")
-    return f"""
-    <html><body style="font-family:monospace;background:#1a1a2e;color:#e0e0e0;padding:20px;">
-      <h2 style="color:{color};">🚨 Anomaly Detected — {severity.upper()}</h2>
-      <pre style="background:#16213e;padding:15px;border-radius:8px;border-left:4px solid {color};">
-{lines}
-      </pre>
-      <p style="color:#888;font-size:12px;">
-        NTPL Digital Pvt Ltd — AI Anomaly Detection System (CU MCA Group-4)
-      </p>
-    </body></html>
-    """
 
 
 # ─── Webhook Channel ─────────────────────────────────────────────────────────

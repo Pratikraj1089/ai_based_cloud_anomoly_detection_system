@@ -127,6 +127,9 @@ def init_db() -> None:
             _safe_add_column(conn, "anomalies",  "probable_cause", "TEXT", "''")
             _safe_add_column(conn, "alerts",     "server_id",      "INTEGER")
             _safe_add_column(conn, "alerts",     "channel",        "TEXT", "'console'")
+            _safe_add_column(conn, "alerts",     "recipient",      "TEXT", "''")
+            _safe_add_column(conn, "alerts",     "subject",        "TEXT", "''")
+            _safe_add_column(conn, "alerts",     "error_message",  "TEXT", "''")
 
             # Legacy CHECK-constraint migration
             _migrate_anomalies_constraint(conn)
@@ -495,3 +498,48 @@ def get_cause_distribution() -> list[dict]:
             return [dict(r) for r in conn.execute(sql).fetchall()]
     except Exception as exc:
         logger.exception("get_cause_distribution failed: %s", exc); return []
+
+
+def get_email_alert_stats() -> dict:
+    """Return stats for email alerts: last sent timestamp, total sent, total failed, and counts for today."""
+    stats = {
+        "last_email_sent": None,
+        "total_sent": 0,
+        "total_failed": 0,
+        "sent_today": 0,
+        "failed_today": 0
+    }
+    try:
+        with get_connection() as conn:
+            # Last sent email
+            row = conn.execute("""
+                SELECT timestamp FROM alerts 
+                WHERE channel='email' AND status='sent' 
+                ORDER BY id DESC LIMIT 1
+            """).fetchone()
+            if row:
+                stats["last_email_sent"] = row["timestamp"]
+
+            # Overall counts
+            row_sent = conn.execute("SELECT COUNT(*) as cnt FROM alerts WHERE channel='email' AND status='sent'").fetchone()
+            stats["total_sent"] = row_sent["cnt"] if row_sent else 0
+
+            row_failed = conn.execute("SELECT COUNT(*) as cnt FROM alerts WHERE channel='email' AND status='failed'").fetchone()
+            stats["total_failed"] = row_failed["cnt"] if row_failed else 0
+
+            # Today's counts (SQLite date('now') works with UTC, let's use date(timestamp) = date('now'))
+            row_today_sent = conn.execute("""
+                SELECT COUNT(*) as cnt FROM alerts 
+                WHERE channel='email' AND status='sent' AND date(timestamp) = date('now')
+            """).fetchone()
+            stats["sent_today"] = row_today_sent["cnt"] if row_today_sent else 0
+
+            row_today_failed = conn.execute("""
+                SELECT COUNT(*) as cnt FROM alerts 
+                WHERE channel='email' AND status='failed' AND date(timestamp) = date('now')
+            """).fetchone()
+            stats["failed_today"] = row_today_failed["cnt"] if row_today_failed else 0
+
+    except Exception as exc:
+        logger.exception("get_email_alert_stats failed: %s", exc)
+    return stats

@@ -34,6 +34,7 @@ from flask_sock import Sock
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT_DIR)
 
+import config
 from config import (
     API_HOST, API_PORT, API_KEY,
     MODEL_TRAIN_SAMPLES, LOG_LEVEL, LOG_DIR,
@@ -148,6 +149,7 @@ def receive_metrics():
     data.setdefault("network_out", 0)
     data.setdefault("processes",   0)
     data.setdefault("uptime",      0)
+    data.setdefault("server_id",   0)
 
     try:
         metric_id = insert_metric(data)
@@ -155,18 +157,34 @@ def receive_metrics():
         logger.exception("Failed to insert metric: %s", exc)
         return _json_error("Database write failed", 500)
 
-    prediction = get_detector(0).predict(data)
+    from backend.trend_engine import push_metric, get_trend_features
+    push_metric(0, data)
+    trend = get_trend_features(0, data)
+
+    prediction = get_detector(0).predict(data, trend)
     is_anomaly = prediction["is_anomaly"]
     severity   = prediction["severity"]
     score      = prediction["score"]
 
+    from backend.false_positive_suppressor import should_alert
+    alert_approved = should_alert(0, is_anomaly)
+
     if is_anomaly:
         try:
+            from backend.explainer import explain
+            from backend.root_cause import classify_root_cause
             from backend.database import insert_anomaly
-            insert_anomaly(data, score, severity, 0)
+            
+            reasons = explain(data, trend, prediction)
+            consec_ram = trend.get("consecutive_ram_increases", 0)
+            probable_cause = classify_root_cause(data, trend, consec_ram)
+            
+            insert_anomaly(data, score, severity, 0, reasons, probable_cause)
         except Exception as exc:
             logger.error("Failed to insert anomaly record: %s", exc)
-        dispatch_alert(severity, score, data)
+            
+        if alert_approved:
+            dispatch_alert(severity, score, data)
 
     total = count_metrics(0)
     detector = get_detector(0)
@@ -286,6 +304,104 @@ def manual_train():
     except Exception as exc:
         logger.exception("manual_train error: %s", exc)
         return _json_error("Training error", 500)
+
+
+# --- POST /api/test-email ----------------------------------------------------
+
+@app.route("/api/test-email", methods=["POST"])
+def test_email():
+    """Send a test incident email to verify SMTP credentials."""
+    try:
+        from backend.email_alerts import verify_smtp_credentials, send_alert_email
+        
+        # Verify first
+        verify_res = verify_smtp_credentials()
+        
+        # Build a mock metric payload for the test email
+        mock_metric = {
+            "cpu": 92.4,
+            "ram": 88.1,
+            "disk": 75.3,
+            "processes": 245,
+            "network_in": 12500000.0,
+            "network_out": 4800000.0,
+            "load_avg_1m": 8.5,
+            "cpu_cores": 4,
+            "uptime": 345600.0,
+            "server_id": 0
+        }
+        mock_trend = {
+            "cpu_delta": 24.5,
+            "ram_delta": 6.2,
+            "disk_delta": 0.1,
+            "process_delta": 18,
+            "net_in_delta": 5000000.0,
+            "net_out_delta": 1200000.0,
+            "cpu_5min_avg": 81.2,
+            "ram_5min_avg": 84.5,
+            "net_in_5min_avg": 10000000.0,
+            "proc_5min_avg": 230.0
+        }
+        mock_reasons = [
+            "Test Alert: CPU usage is critically high (92.4%)",
+            "Test Alert: Process count spike detected (+18)",
+            "Test Alert: Load ratio exceeds safe limits"
+        ]
+        mock_probable_cause = "Test Simulation / SMTP Verification"
+
+        if verify_res["smtp_connection"] and verify_res["authentication"]:
+            # Connection and Auth ok, try sending the email
+            sent_ok = send_alert_email(
+                server_id=0,
+                severity="Danger",
+                score=-0.8521,
+                metric=mock_metric,
+                trend=mock_trend,
+                reasons=mock_reasons,
+                probable_cause=mock_probable_cause
+            )
+            verify_res["email_sent"] = sent_ok
+            if sent_ok:
+                verify_res["message"] = "Test email delivered successfully"
+            else:
+                verify_res["message"] = "SMTP login succeeded, but email transmission failed"
+        else:
+            verify_res["email_sent"] = False
+            
+        return jsonify(verify_res)
+    except Exception as exc:
+        logger.exception("test_email error: %s", exc)
+        return jsonify({
+            "smtp_connection": False,
+            "authentication": False,
+            "email_sent": False,
+            "message": f"Test email failed: {str(exc)}"
+        }), 500
+
+
+# --- GET /api/email-status ---------------------------------------------------
+
+@app.route("/api/email-status", methods=["GET"])
+def email_status():
+    """Return SMTP verification status and email alerting statistics."""
+    try:
+        from backend.email_alerts import verify_smtp_credentials
+        from backend.database import get_email_alert_stats
+        
+        verify_res = verify_smtp_credentials()
+        stats = get_email_alert_stats()
+        
+        return jsonify({
+            "success": True,
+            "smtp_connection": verify_res["smtp_connection"],
+            "authentication": verify_res["authentication"],
+            "smtp_status_message": verify_res["message"],
+            "email_enabled": config.SMTP_ENABLED,
+            **stats
+        })
+    except Exception as exc:
+        logger.exception("email_status error: %s", exc)
+        return _json_error("Failed to fetch email status", 500)
 
 
 # --- GET /api/alerts ---------------------------------------------------------
@@ -538,20 +654,36 @@ def background_poll_loop():
                     metric_id = insert_metric(metrics)
                     
                     # Run anomaly detection
+                    from backend.trend_engine import push_metric, get_trend_features
+                    push_metric(server_id, metrics)
+                    trend = get_trend_features(server_id, metrics)
+
                     detector = get_detector(server_id)
-                    prediction = detector.predict(metrics)
+                    prediction = detector.predict(metrics, trend)
                     
                     is_anomaly = prediction["is_anomaly"]
                     severity   = prediction["severity"]
                     score      = prediction["score"]
                     
+                    from backend.false_positive_suppressor import should_alert
+                    alert_approved = should_alert(server_id, is_anomaly)
+                    
                     if is_anomaly:
                         try:
+                            from backend.explainer import explain
+                            from backend.root_cause import classify_root_cause
                             from backend.database import insert_anomaly
-                            insert_anomaly(metrics, score, severity, server_id)
+                            
+                            reasons = explain(metrics, trend, prediction)
+                            consec_ram = trend.get("consecutive_ram_increases", 0)
+                            probable_cause = classify_root_cause(metrics, trend, consec_ram)
+                            
+                            insert_anomaly(metrics, score, severity, server_id, reasons, probable_cause)
                         except Exception as e:
                             logger.error("Failed to insert remote anomaly record: %s", e)
-                        dispatch_alert(severity, score, metrics)
+                            
+                        if alert_approved:
+                            dispatch_alert(severity, score, metrics)
                         
                     total_samples = count_metrics(server_id)
                     if not detector.is_trained and total_samples >= MODEL_TRAIN_SAMPLES:

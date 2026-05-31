@@ -324,6 +324,7 @@ async function fetchAll() {
         updateStatusBadge(statusD);
         renderAnomalyTable(anomalies);
         renderModelPanel(statusD);
+        fetchEmailStatus();
 
         el("apiErrorBanner") && (el("apiErrorBanner").style.display = "none");
 
@@ -331,6 +332,60 @@ async function fetchAll() {
         console.warn("Poll failed:", err);
         const banner = el("apiErrorBanner");
         if (banner) banner.style.display = "block";
+    }
+}
+
+// ─── Email Notification Status ────────────────────────────────────────────────
+async function fetchEmailStatus() {
+    try {
+        const res = await apiFetch("/api/email-status");
+        if (res) {
+            const enabledEl = el("emailEnabledBadge");
+            if (enabledEl) {
+                enabledEl.textContent = res.email_enabled ? "✅ Enabled" : "❌ Disabled";
+                enabledEl.style.color = res.email_enabled ? "#2ecc71" : "#e74c3c";
+            }
+            
+            const connEl = el("smtpConnectionBadge");
+            if (connEl) {
+                connEl.textContent = res.smtp_connection ? "✅ Connected" : "❌ Disconnected";
+                connEl.style.color = res.smtp_connection ? "#2ecc71" : "#e74c3c";
+            }
+
+            const authEl = el("smtpAuthBadge");
+            if (authEl) {
+                authEl.textContent = res.authentication ? "✅ Verified" : "❌ Failed / Unverified";
+                authEl.style.color = res.authentication ? "#2ecc71" : "#e74c3c";
+            }
+
+            el("lastEmailSent") && (el("lastEmailSent").textContent = res.last_email_sent ? formatTime(res.last_email_sent) : "Never");
+            el("emailsSentToday") && (el("emailsSentToday").textContent = res.sent_today);
+            el("emailsFailedToday") && (el("emailsFailedToday").textContent = res.failed_today);
+            el("smtpStatusMsg") && (el("smtpStatusMsg").textContent = res.smtp_status_message || "No status message available");
+        }
+    } catch (err) {
+        console.warn("Failed to fetch email status:", err);
+    }
+}
+
+async function triggerTestEmail() {
+    const btn = el("testEmailBtn");
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '✉️ Sending Test...';
+    try {
+        const res = await apiFetch("/api/test-email", { method: "POST" });
+        if (res && res.email_sent) {
+            showToast("Test alert email sent successfully! ✅", "success");
+        } else {
+            showToast("Failed to send test email: " + (res.message || "Unknown error") + " ❌", "error");
+        }
+    } catch (err) {
+        showToast("Error sending test email: " + err.message + " ❌", "error");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '✉️ Send Test Email';
+        fetchEmailStatus();
     }
 }
 
@@ -838,6 +893,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initMetricsWebSocket();
 
     el("retrainBtn")?.addEventListener("click", triggerRetrain);
+    el("testEmailBtn")?.addEventListener("click", triggerTestEmail);
 
     // Cloud-info modals
     el("modalCloseBtn")?.addEventListener("click", closeModal);

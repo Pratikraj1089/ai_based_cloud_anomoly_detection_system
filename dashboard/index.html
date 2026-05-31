@@ -450,6 +450,49 @@
         </div>
       </section>
 
+      <!-- Email Notification System Status -->
+      <section class="glass-card" aria-label="Email operational status">
+        <div class="card-title">
+          <span class="icon">✉️</span>
+          Email Alerts
+        </div>
+        <div class="model-panel">
+          <div class="model-row">
+            <span class="label">Email System</span>
+            <span class="value" id="emailEnabledBadge">Checking…</span>
+          </div>
+          <div class="model-row">
+            <span class="label">SMTP Connection</span>
+            <span class="value" id="smtpConnectionBadge">Checking…</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Authentication</span>
+            <span class="value" id="smtpAuthBadge">Checking…</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Last Email Sent</span>
+            <span class="value" id="lastEmailSent">—</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Sent Today</span>
+            <span class="value" id="emailsSentToday" style="font-weight: bold;">0</span>
+          </div>
+          <div class="model-row">
+            <span class="label">Failed Today</span>
+            <span class="value" id="emailsFailedToday" style="font-weight: bold;">0</span>
+          </div>
+          <div class="model-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+            <span class="label">SMTP Status Message</span>
+            <span class="value" id="smtpStatusMsg" style="font-size:0.75rem; word-break: break-all; opacity: 0.8;">Checking…</span>
+          </div>
+          <div style="margin-top:var(--space-md); display: flex; gap: 10px;">
+            <button class="btn btn-primary" id="testEmailBtn" title="Send a simulated incident report email">
+              ✉️ Send Test Email
+            </button>
+          </div>
+        </div>
+      </section>
+
     </div><!-- /bottom-grid -->
   </div><!-- /dashboardView -->
 

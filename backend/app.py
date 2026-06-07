@@ -970,6 +970,327 @@ def disconnect_server():
         return _json_error("Disconnect failed: " + str(exc), 500)
 
 
+# --- API Docs Route ----------------------------------------------------------
+
+@app.route("/api/docs", methods=["GET"])
+def api_docs():
+    """Render the API documentation page."""
+    html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Cloud Pulse — API Documentation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Marked.js for markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js for code block parsing -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/http.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: rgba(21, 27, 38, 0.7);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-color: #7c4dff;
+            --accent-hover: #b388ff;
+            --text-main: #e6edf3;
+            --text-secondary: #8b949e;
+            --sidebar-width: 280px;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        /* Sidebar layout */
+        aside {
+            width: var(--sidebar-width);
+            background: rgba(13, 17, 23, 0.95);
+            border-right: 1px solid var(--border-color);
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            padding: 2rem 1.5rem;
+            overflow-y: auto;
+            z-index: 10;
+        }
+        .logo {
+            font-weight: 700;
+            font-size: 1.3rem;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 2.5rem;
+            background: linear-gradient(135deg, #b388ff, #7c4dff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .sidebar-title {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-weight: 600;
+        }
+        .toc-list {
+            list-style: none;
+        }
+        .toc-list li {
+            margin-bottom: 0.5rem;
+        }
+        .toc-list a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            display: block;
+            padding: 0.25rem 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .toc-list a:hover {
+            color: var(--accent-hover);
+            transform: translateX(3px);
+        }
+        /* Main view */
+        main {
+            margin-left: var(--sidebar-width);
+            flex-grow: 1;
+            padding: 3rem 4rem;
+            max-width: 1000px;
+        }
+        /* Markdown rendering styling */
+        #doc-container h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #fff, #8b949e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 1rem;
+        }
+        #doc-container h2 {
+            font-size: 1.6rem;
+            margin-top: 3rem;
+            margin-bottom: 1.5rem;
+            color: #b388ff;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+        #doc-container h3 {
+            font-size: 1.25rem;
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        #doc-container p {
+            margin-bottom: 1.2rem;
+            color: #c9d1d9;
+        }
+        #doc-container ul, #doc-container ol {
+            margin-bottom: 1.5rem;
+            padding-left: 1.5rem;
+        }
+        #doc-container li {
+            margin-bottom: 0.5rem;
+        }
+        #doc-container pre {
+            background-color: #161b22;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.2rem;
+            overflow-x: auto;
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+        #doc-container code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            background-color: rgba(110, 118, 129, 0.2);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+        }
+        #doc-container pre code {
+            background-color: transparent;
+            padding: 0;
+            border-radius: 0;
+        }
+        #doc-container table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 2rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #doc-container th, #doc-container td {
+            padding: 0.8rem 1rem;
+            border: 1px solid var(--border-color);
+            text-align: left;
+        }
+        #doc-container th {
+            background-color: rgba(110, 118, 129, 0.1);
+            font-weight: 600;
+        }
+        #doc-container blockquote {
+            border-left: 4px solid var(--accent-color);
+            background: rgba(124, 77, 255, 0.05);
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+            border-radius: 0 8px 8px 0;
+        }
+        /* Custom copy button inside code blocks */
+        .copy-btn {
+            position: absolute;
+            top: 0.75rem;
+            right: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 0.35rem 0.65rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+        .copy-btn:hover {
+            background: var(--accent-color);
+            color: white;
+        }
+        /* Responsive */
+        @media (max-width: 768px) {
+            body {
+                flex-direction: column;
+            }
+            aside {
+                position: relative;
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+            }
+            main {
+                margin-left: 0;
+                padding: 2rem 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <aside>
+        <div class="logo">🖥️ Smart Cloud Pulse</div>
+        <div class="sidebar-title">Table of Contents</div>
+        <ul class="toc-list" id="toc">
+            <!-- Populated dynamically -->
+        </ul>
+    </aside>
+    <main>
+        <div id="doc-container">
+            <p style="color: var(--text-secondary);">Loading documentation...</p>
+        </div>
+    </main>
+
+    <script>
+        // Set marked options
+        marked.setOptions({
+            highlight: function(code, lang) {
+                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                return hljs.highlight(code, { language }).value;
+            },
+            gfm: true,
+            breaks: true
+        });
+
+        // Load the API_DOCS.md file via raw endpoint
+        fetch('/api/docs/raw')
+            .then(res => {
+                if (!res.ok) throw new Error("Could not load API_DOCS.md");
+                return res.text();
+            })
+            .then(markdown => {
+                // Parse markdown to HTML
+                document.getElementById('doc-container').innerHTML = marked.parse(markdown);
+                
+                // Post-process code blocks to add copy button
+                document.querySelectorAll('pre').forEach(block => {
+                    const btn = document.createElement('button');
+                    btn.className = 'copy-btn';
+                    btn.textContent = 'Copy';
+                    btn.onclick = () => {
+                        const code = block.querySelector('code').innerText;
+                        navigator.clipboard.writeText(code);
+                        btn.textContent = 'Copied!';
+                        setTimeout(() => btn.textContent = 'Copy', 2000);
+                    };
+                    block.appendChild(btn);
+                });
+
+                // Generate TOC
+                const toc = document.getElementById('toc');
+                toc.innerHTML = '';
+                document.getElementById('doc-container').querySelectorAll('h2, h3').forEach((header, index) => {
+                    // Assign id to header for anchors
+                    const headerId = 'section-' + index;
+                    header.id = headerId;
+
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = '#' + headerId;
+                    a.textContent = header.textContent;
+                    if (header.tagName === 'H3') {
+                        a.style.paddingLeft = '0.75rem';
+                        a.style.fontSize = '0.88rem';
+                    }
+                    li.appendChild(a);
+                    toc.appendChild(li);
+                });
+            })
+            .catch(err => {
+                document.getElementById('doc-container').innerHTML = `
+                    <h1 style="color: #ff5252;">Error Loading Documentation</h1>
+                    <p>${err.message}</p>
+                    <p>Make sure the API_DOCS.md file is present in the project root directory.</p>
+                `;
+            });
+    </script>
+</body>
+</html>
+"""
+    return html_content, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/api/docs/raw", methods=["GET"])
+def raw_api_docs():
+    """Retrieve raw API_DOCS.md content."""
+    try:
+        doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "API_DOCS.md")
+        with open(doc_path, "r", encoding="utf-8") as f:
+            return f.read(), 200, {"Content-Type": "text/plain; charset=utf-8"}
+    except Exception as exc:
+        logger.error("Could not read API_DOCS.md: %s", exc)
+        return _json_error("Could not read API_DOCS.md", 404)
+
+
 # --- Health Check ------------------------------------------------------------
 
 @app.route("/api/health", methods=["GET"])

@@ -145,7 +145,13 @@ class AnomalyDetector:
             return False
 
         if trends is None:
-            trends = [{}] * len(metrics)
+            from backend.trend_engine import _TrendEngine
+            temp_engine = _TrendEngine()
+            trends = []
+            for m in metrics:
+                temp_engine.push(self.server_id, m)
+                t = temp_engine.get_features(self.server_id, m)
+                trends.append(t)
 
         try:
             X = np.array([_to_feature_vector(m, t) for m, t in zip(metrics, trends)])
@@ -191,12 +197,19 @@ class AnomalyDetector:
         ram        = float(metric.get("ram",         0.0))
         cpu_cores  = int(metric.get("cpu_cores",     1))
         load_avg   = float(metric.get("load_avg_1m", cpu * cpu_cores / 100.0))
+        net_in     = float(metric.get("network_in",  0.0))
+        net_out    = float(metric.get("network_out", 0.0))
+        trend_d    = trend or {}
+        net_in_5m  = float(trend_d.get("net_in_5min_avg",  net_in))
+        net_out_5m = float(trend_d.get("net_out_5min_avg", net_out))
 
         if not self.is_trained:
             # Pure rule-based fallback (before enough data to train)
             severity = classify_vps_situation(
                 cpu=cpu, ram=ram, load_avg_1m=load_avg,
                 cpu_cores=cpu_cores, ai_score=0.0,
+                network_in=net_in, network_out=net_out,
+                net_in_5min_avg=net_in_5m, net_out_5min_avg=net_out_5m,
             )
             return {
                 "is_anomaly": severity != "Normal",
@@ -213,6 +226,8 @@ class AnomalyDetector:
             severity = classify_vps_situation(
                 cpu=cpu, ram=ram, load_avg_1m=load_avg,
                 cpu_cores=cpu_cores, ai_score=score,
+                network_in=net_in, network_out=net_out,
+                net_in_5min_avg=net_in_5m, net_out_5min_avg=net_out_5m,
             )
             return {
                 "is_anomaly": severity != "Normal",

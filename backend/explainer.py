@@ -7,7 +7,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import (CPU_MODERATE,CPU_HIGH,CPU_DANGER,RAM_MODERATE,RAM_HIGH,RAM_DANGER,
                     DISK_MODERATE,DISK_HIGH,DISK_DANGER,LOAD_MODERATE,LOAD_HIGH,LOAD_DANGER,
                     NET_SPIKE_MODERATE,NET_SPIKE_HIGH,NET_SPIKE_DANGER,
-                    PROCESS_DROP_MODERATE,PROCESS_DROP_HIGH,PROCESS_DROP_DANGER)
+                    PROCESS_DROP_MODERATE,PROCESS_DROP_HIGH,PROCESS_DROP_DANGER,
+                    NET_MIN_SAFE_BASELINE,
+                    IFOREST_MODERATE_THRESHOLD, IFOREST_HIGH_THRESHOLD, IFOREST_DANGER_THRESHOLD)
 
 def explain(metric:dict, trend:dict, prediction:dict) -> list:
     r=[]
@@ -38,11 +40,54 @@ def explain(metric:dict, trend:dict, prediction:dict) -> list:
     if lr>=LOAD_DANGER: r.append(f'System overloaded: load ratio {lr:.2f} (load={la:.1f},cores={cc})')
     elif lr>=LOAD_HIGH: r.append(f'High load ratio: {lr:.2f}')
     elif lr>=LOAD_MODERATE: r.append(f'Elevated load ratio: {lr:.2f}')
-    if ni>=NET_SPIKE_DANGER: r.append(f'Extreme inbound: {ni/1e6:.1f} MB/s — possible DDoS')
-    elif ni>=NET_SPIKE_HIGH: r.append(f'Very high inbound: {ni/1e6:.1f} MB/s')
-    elif ni>=NET_SPIKE_MODERATE: r.append(f'Elevated inbound: {ni/1e6:.1f} MB/s')
-    if no>=NET_SPIKE_DANGER: r.append(f'Extreme outbound: {no/1e6:.1f} MB/s — possible exfiltration')
-    elif no>=NET_SPIKE_HIGH: r.append(f'Very high outbound: {no/1e6:.1f} MB/s')
-    elif no>=NET_SPIKE_MODERATE: r.append(f'Elevated outbound: {no/1e6:.1f} MB/s')
-    if not r and score<=-0.50: r.append(f'AI detected rare system state (score={score:.4f})')
+
+    # Format net rates helper
+    def format_net(val):
+        if val >= 1024*1024:
+            return f"{val / (1024*1024):.1f} MB/s"
+        elif val >= 1024:
+            return f"{val / 1024:.1f} KB/s"
+        return f"{val:.0f} B/s"
+
+    ni_avg = float(trend.get('net_in_5min_avg', ni) if trend else ni)
+    no_avg = float(trend.get('net_out_5min_avg', no) if trend else no)
+    ni_ratio = ni / max(ni_avg, NET_MIN_SAFE_BASELINE)
+    no_ratio = no / max(no_avg, NET_MIN_SAFE_BASELINE)
+
+    # Inbound network rules
+    if ni_ratio >= 8.0:
+        r.append(f'Extreme inbound traffic: {format_net(ni)} ({ni_ratio:.1f}x higher than normal baseline of {format_net(ni_avg)}) — possible DDoS')
+    elif ni_ratio >= 4.0:
+        r.append(f'Very high inbound traffic: {format_net(ni)} ({ni_ratio:.1f}x higher than normal baseline of {format_net(ni_avg)})')
+    elif ni_ratio >= 2.0:
+        r.append(f'Elevated inbound traffic: {format_net(ni)} ({ni_ratio:.1f}x higher than normal baseline of {format_net(ni_avg)})')
+    elif ni >= NET_SPIKE_DANGER:
+        r.append(f'Extreme inbound (absolute fallback): {format_net(ni)} — possible DDoS')
+    elif ni >= NET_SPIKE_HIGH:
+        r.append(f'Very high inbound (absolute fallback): {format_net(ni)}')
+    elif ni >= NET_SPIKE_MODERATE:
+        r.append(f'Elevated inbound (absolute fallback): {format_net(ni)}')
+
+    # Outbound network rules
+    if no_ratio >= 8.0:
+        r.append(f'Extreme outbound traffic: {format_net(no)} ({no_ratio:.1f}x higher than normal baseline of {format_net(no_avg)}) — possible exfiltration')
+    elif no_ratio >= 4.0:
+        r.append(f'Very high outbound traffic: {format_net(no)} ({no_ratio:.1f}x higher than normal baseline of {format_net(no_avg)})')
+    elif no_ratio >= 2.0:
+        r.append(f'Elevated outbound traffic: {format_net(no)} ({no_ratio:.1f}x higher than normal baseline of {format_net(no_avg)})')
+    elif no >= NET_SPIKE_DANGER:
+        r.append(f'Extreme outbound (absolute fallback): {format_net(no)} — possible exfiltration')
+    elif no >= NET_SPIKE_HIGH:
+        r.append(f'Very high outbound (absolute fallback): {format_net(no)}')
+    elif no >= NET_SPIKE_MODERATE:
+        r.append(f'Elevated outbound (absolute fallback): {format_net(no)}')
+
+    # AI Score Severity explanations
+    if score <= IFOREST_DANGER_THRESHOLD:
+        r.append(f'AI Severity: Danger (Isolation Forest Score: {score:.4f}) — Traffic pattern significantly deviates from learned behavior')
+    elif score <= IFOREST_HIGH_THRESHOLD:
+        r.append(f'AI Severity: High (Isolation Forest Score: {score:.4f}) — Traffic pattern significantly deviates from learned behavior')
+    elif score <= IFOREST_MODERATE_THRESHOLD:
+        r.append(f'AI Severity: Moderate (Isolation Forest Score: {score:.4f}) — Traffic pattern significantly deviates from learned behavior')
+
     return r

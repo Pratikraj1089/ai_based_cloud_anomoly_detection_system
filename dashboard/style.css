@@ -212,6 +212,25 @@ body::before {
   box-shadow: var(--shadow-glow-red);
 }
 
+.status-badge.moderate-anomaly {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-yellow);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.status-badge.high-anomaly {
+  background: rgba(249, 115, 22, 0.15);
+  color: var(--accent-orange);
+  border-color: rgba(249, 115, 22, 0.3);
+}
+
+.status-badge.danger {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--accent-red);
+  border-color: rgba(239, 68, 68, 0.4);
+  box-shadow: var(--shadow-glow-red);
+}
+
 .status-badge.warning {
   background: rgba(245, 158, 11, 0.15);
   color: var(--accent-yellow);

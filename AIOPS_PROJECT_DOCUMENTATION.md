@@ -71,7 +71,7 @@ The fundamental premise of the Isolation Forest (i.F.) is: **anomalies are easie
     *   If $E(h(x)) \to c(n)$, then $s \to 2^{-1} = 0.5$. The point has an average path length similar to a random search and is likely **normal**.
     *   If $E(h(x)) \to n$, then $s \to 2^{-\infty} = 0$. The path lengths are long, meaning the point is deeply nested in a cluster and is **highly normal**.
 
-In our implementation (`backend/model.py`), the decision function returns a standardized score where negative values represent anomalies. If the score is below the configured threshold (e.g. `THRESHOLD_HIGH = -0.75`), the pipeline flags an anomaly.
+In our implementation (`backend/model.py`), the decision function returns a standardized score where negative values represent anomalies. The pipeline maps these scores to specific severity tiers based on configurable thresholds in `.env` (defaulting to: `score <= -0.85` for `Danger`, `score <= -0.70` for `High Anomaly`, and `score <= -0.55` for `Moderate Anomaly`; scores above `-0.55` are treated as `Normal`).
 
 ### Feature Engineering: "Distance-to-Danger"
 
@@ -199,7 +199,7 @@ Stores raw resource usage reports.
 Stores detected anomalous behavior.
 *   `metric_data`: A JSON dump of the raw metrics that triggered the anomaly.
 *   `score`: The Isolation Forest anomaly score.
-*   `severity`: Classified as `Low`, `Medium`, or `High`.
+*   `severity`: Classified as `Moderate Anomaly`, `High Anomaly`, or `Danger` (and `Normal` for healthy logs).
 *   `reasons`: A JSON-serialized array of strings explaining the cause of the anomaly (e.g., `["Critical CPU: 96%", "Rapid CPU spike: +30.2%"]`).
 *   `probable_cause`: Categorized failure modes (e.g., `Possible Memory Leak`).
 *   `resolved`: Boolean flag indicating if the issue was corrected.

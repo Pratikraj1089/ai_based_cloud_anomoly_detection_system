@@ -60,9 +60,8 @@ In server monitoring, an anomaly is any behavior that deviates significantly fro
 We use the **Isolation Forest** (`sklearn.ensemble.IsolationForest`) algorithm. 
 * **The Concept**: Instead of profiling "normal" points, it isolates anomalies. It does this by randomly picking a feature (like CPU) and then randomly selecting a split value between the minimum and maximum.
 * **Why it works**: Anomalous points are statistically sparse and far away from normal dense clusters. Therefore, they require **very few splits** to isolate.
-* **The Score**: The algorithm returns an anomaly score. 
-  * Scores close to **`1.0`** or positive numbers indicate dense clusters (**Normal**).
-  * Highly negative scores (close to **`-1.0`**, or specifically below **`-0.75`** in our app) indicate isolated points (**Anomaly**).
+  * Scores close to **`0.0`** or positive numbers indicate dense clusters (**Normal**).
+  * Negative scores indicate rare states (**Anomaly**). The app maps these into three severity tiers: **`Moderate Anomaly`** (score $\le -0.55$), **`High Anomaly`** (score $\le -0.70$), and **`Danger`** (score $\le -0.85$).
 
 ### 3. Feature Engineering: "Distance to Danger"
 If you feed raw percentages (0% to 100%) to the Isolation Forest, minor fluctuations (e.g. CPU jumping from 2% to 12%) might look like anomalies because they are sparse. To fix this, we engineer **Relative Distance to Danger** metrics:

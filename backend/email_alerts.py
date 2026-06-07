@@ -101,19 +101,19 @@ def build_alert_email_html(server_name: str, server_ip: str, severity: str, time
                            reasons: list, remediation: dict, alert_id: int) -> str:
     """Build a professional, responsive, dark-theme HTML email alert."""
     
-    # Severity Banner styling
+    # Severity Banner styling to align with 4-tier alerting model
     sev_upper = severity.upper()
-    if "CRITICAL" in sev_upper:
-        banner_color = "#e74c3c" # Dark Red
-        text_color = "#ffffff"
-    elif "DANGER" in sev_upper:
-        banner_color = "#e67e22" # Orange
+    if "DANGER" in sev_upper:
+        banner_color = "#e74c3c" # Crimson Red
         text_color = "#ffffff"
     elif "HIGH" in sev_upper:
+        banner_color = "#e67e22" # Dark Orange
+        text_color = "#ffffff"
+    elif "MODERATE" in sev_upper:
         banner_color = "#f1c40f" # Yellow
-        text_color = "#2c3e50"
+        text_color = "#1e272e"
     else:
-        banner_color = "#2ecc71" # Green
+        banner_color = "#2ecc71" # Emerald Green
         text_color = "#ffffff"
 
     # Explainer bullets
@@ -201,10 +201,34 @@ def build_alert_email_html(server_name: str, server_ip: str, severity: str, time
     net_in_delta = trend.get('net_in_delta', 0.0)
     net_out_delta = trend.get('net_out_delta', 0.0)
 
+    from config import (NET_MIN_SAFE_BASELINE,
+                        IFOREST_MODERATE_THRESHOLD, IFOREST_HIGH_THRESHOLD, IFOREST_DANGER_THRESHOLD)
+    
     cpu_avg = trend.get('cpu_5min_avg', cpu)
     ram_avg = trend.get('ram_5min_avg', ram)
     proc_avg = trend.get('proc_5min_avg', float(processes))
     net_in_avg = trend.get('net_in_5min_avg', net_in)
+    net_out_avg = trend.get('net_out_5min_avg', net_out)
+
+    net_in_ratio = net_in / max(net_in_avg, NET_MIN_SAFE_BASELINE)
+    net_out_ratio = net_out / max(net_out_avg, NET_MIN_SAFE_BASELINE)
+
+    # Determine colors for ratios
+    net_in_color = "#2ecc71" if net_in_ratio < 2.0 else ("#f1c40f" if net_in_ratio < 4.0 else ("#e67e22" if net_in_ratio < 8.0 else "#e74c3c"))
+    net_out_color = "#2ecc71" if net_out_ratio < 2.0 else ("#f1c40f" if net_out_ratio < 4.0 else ("#e67e22" if net_out_ratio < 8.0 else "#e74c3c"))
+
+    # Determine AI Severity
+    ai_severity = "Normal"
+    ai_severity_color = "#2ecc71"
+    if score <= IFOREST_DANGER_THRESHOLD:
+        ai_severity = "Danger"
+        ai_severity_color = "#e74c3c"
+    elif score <= IFOREST_HIGH_THRESHOLD:
+        ai_severity = "High Anomaly"
+        ai_severity_color = "#e67e22"
+    elif score <= IFOREST_MODERATE_THRESHOLD:
+        ai_severity = "Moderate Anomaly"
+        ai_severity_color = "#f1c40f"
 
     # JSON details
     json_section = ""
@@ -304,7 +328,11 @@ def build_alert_email_html(server_name: str, server_ip: str, severity: str, time
                         </tr>
                         <tr style="border-bottom: 1px solid #30363d;">
                             <td style="padding: 8px 0; font-weight: bold;">AI Anomaly Score:</td>
-                            <td style="padding: 8px 0; font-weight: bold; color: #e74c3c;">{score:.4f}</td>
+                            <td style="padding: 8px 0; font-weight: bold; color: {ai_severity_color};">{score:.4f}</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid #30363d;">
+                            <td style="padding: 8px 0; font-weight: bold;">AI Severity:</td>
+                            <td style="padding: 8px 0; font-weight: bold; color: {ai_severity_color};">{ai_severity}</td>
                         </tr>
                         <tr style="border-bottom: 1px solid #30363d;">
                             <td style="padding: 8px 0; font-weight: bold;">Probable Cause:</td>
@@ -372,14 +400,14 @@ def build_alert_email_html(server_name: str, server_ip: str, severity: str, time
                             <tr style="border-bottom: 1px solid #30363d;">
                                 <td style="padding: 10px 8px; font-weight: bold;">Network Inbound</td>
                                 <td style="padding: 10px 8px; text-align: right;">{net_in_str}</td>
-                                <td style="padding: 10px 8px; text-align: right;">{fmt_delta(net_in_delta/1024, " KB/s")}</td>
-                                <td style="padding: 10px 8px; text-align: right;">{format_net(net_in_avg)}</td>
+                                <td style="padding: 10px 8px; text-align: right; color: #8b949e;">Baseline: {format_net(net_in_avg)}</td>
+                                <td style="padding: 10px 8px; text-align: right; font-weight: bold; color: {net_in_color};">Ratio: {net_in_ratio:.1f}x</td>
                             </tr>
                             <tr style="border-bottom: 1px solid #30363d;">
                                 <td style="padding: 10px 8px; font-weight: bold;">Network Outbound</td>
                                 <td style="padding: 10px 8px; text-align: right;">{net_out_str}</td>
-                                <td style="padding: 10px 8px; text-align: right;">{fmt_delta(net_out_delta/1024, " KB/s")}</td>
-                                <td style="padding: 10px 8px; text-align: right;">—</td>
+                                <td style="padding: 10px 8px; text-align: right; color: #8b949e;">Baseline: {format_net(net_out_avg)}</td>
+                                <td style="padding: 10px 8px; text-align: right; font-weight: bold; color: {net_out_color};">Ratio: {net_out_ratio:.1f}x</td>
                             </tr>
                             <tr style="border-bottom: 1px solid #30363d;">
                                 <td style="padding: 10px 8px; font-weight: bold;">System Uptime</td>

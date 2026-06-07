@@ -166,6 +166,15 @@ def receive_metrics():
     severity   = prediction["severity"]
     score      = prediction["score"]
 
+    # Calculate network ratios and baselines
+    net_in = float(data.get("network_in", 0.0))
+    net_out = float(data.get("network_out", 0.0))
+    net_in_avg = float(trend.get("net_in_5min_avg", net_in))
+    net_out_avg = float(trend.get("net_out_5min_avg", net_out))
+    from config import NET_MIN_SAFE_BASELINE
+    net_in_ratio = net_in / max(net_in_avg, NET_MIN_SAFE_BASELINE)
+    net_out_ratio = net_out / max(net_out_avg, NET_MIN_SAFE_BASELINE)
+
     from backend.false_positive_suppressor import should_alert
     alert_approved = should_alert(0, is_anomaly)
 
@@ -179,7 +188,8 @@ def receive_metrics():
             consec_ram = trend.get("consecutive_ram_increases", 0)
             probable_cause = classify_root_cause(data, trend, consec_ram)
             
-            insert_anomaly(data, score, severity, 0, reasons, probable_cause)
+            insert_anomaly(data, score, severity, 0, reasons, probable_cause,
+                           network_in_ratio=net_in_ratio, network_out_ratio=net_out_ratio)
         except Exception as exc:
             logger.error("Failed to insert anomaly record: %s", exc)
             
@@ -194,12 +204,16 @@ def receive_metrics():
         detector.train(training_data)
 
     get_latest_status(0).update({
-        "status":        "anomaly" if is_anomaly else "normal",
-        "last_updated":  data["timestamp"],
-        "severity":      severity if is_anomaly else None,
-        "score":         score,
-        "metric_id":     metric_id,
-        "total_metrics": total,
+        "status":             "anomaly" if is_anomaly else "normal",
+        "last_updated":       data["timestamp"],
+        "severity":           severity if is_anomaly else None,
+        "score":              score,
+        "metric_id":          metric_id,
+        "total_metrics":      total,
+        "network_in_ratio":   round(net_in_ratio, 2),
+        "network_out_ratio":  round(net_out_ratio, 2),
+        "net_in_5min_avg":    round(net_in_avg, 2),
+        "net_out_5min_avg":   round(net_out_avg, 2),
     })
 
     return jsonify({
@@ -665,6 +679,15 @@ def background_poll_loop():
                     severity   = prediction["severity"]
                     score      = prediction["score"]
                     
+                    # Calculate network ratios and baselines for remote server
+                    net_in = float(metrics.get("network_in", 0.0))
+                    net_out = float(metrics.get("network_out", 0.0))
+                    net_in_avg = float(trend.get("net_in_5min_avg", net_in))
+                    net_out_avg = float(trend.get("net_out_5min_avg", net_out))
+                    from config import NET_MIN_SAFE_BASELINE
+                    net_in_ratio = net_in / max(net_in_avg, NET_MIN_SAFE_BASELINE)
+                    net_out_ratio = net_out / max(net_out_avg, NET_MIN_SAFE_BASELINE)
+
                     from backend.false_positive_suppressor import should_alert
                     alert_approved = should_alert(server_id, is_anomaly)
                     
@@ -678,7 +701,8 @@ def background_poll_loop():
                             consec_ram = trend.get("consecutive_ram_increases", 0)
                             probable_cause = classify_root_cause(metrics, trend, consec_ram)
                             
-                            insert_anomaly(metrics, score, severity, server_id, reasons, probable_cause)
+                            insert_anomaly(metrics, score, severity, server_id, reasons, probable_cause,
+                                           network_in_ratio=net_in_ratio, network_out_ratio=net_out_ratio)
                         except Exception as e:
                             logger.error("Failed to insert remote anomaly record: %s", e)
                             
@@ -692,12 +716,16 @@ def background_poll_loop():
                         detector.train(training_data)
                         
                     get_latest_status(server_id).update({
-                        "status":        "anomaly" if is_anomaly else "normal",
-                        "last_updated":  ts,
-                        "severity":      severity if is_anomaly else None,
-                        "score":         score,
-                        "metric_id":     metric_id,
-                        "total_metrics": total_samples,
+                        "status":             "anomaly" if is_anomaly else "normal",
+                        "last_updated":       ts,
+                        "severity":           severity if is_anomaly else None,
+                        "score":              score,
+                        "metric_id":          metric_id,
+                        "total_metrics":      total_samples,
+                        "network_in_ratio":   round(net_in_ratio, 2),
+                        "network_out_ratio":  round(net_out_ratio, 2),
+                        "net_in_5min_avg":    round(net_in_avg, 2),
+                        "net_out_5min_avg":   round(net_out_avg, 2),
                     })
                     
                     broadcast_metrics_update(server_id, metrics, prediction)

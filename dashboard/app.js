@@ -204,6 +204,23 @@ function updateStatCards(metric) {
     updateRing("ringRAM", metric.ram);
     updateRing("ringDisk", metric.disk);
 
+    // Network baseline & ratio updates
+    const statusD = state.status || {};
+    const netInAvg = statusD.net_in_5min_avg !== undefined ? statusD.net_in_5min_avg : metric.network_in;
+    const netInRatio = statusD.network_in_ratio !== undefined ? statusD.network_in_ratio : 1.0;
+    const netOutAvg = statusD.net_out_5min_avg !== undefined ? statusD.net_out_5min_avg : metric.network_out;
+    const netOutRatio = statusD.network_out_ratio !== undefined ? statusD.network_out_ratio : 1.0;
+
+    const valNetInBaseline = el("valNetInBaseline");
+    if (valNetInBaseline) valNetInBaseline.textContent = formatBytes(netInAvg);
+    const valNetInRatio = el("valNetInRatio");
+    if (valNetInRatio) valNetInRatio.textContent = netInRatio.toFixed(1) + "x";
+
+    const valNetOutBaseline = el("valNetOutBaseline");
+    if (valNetOutBaseline) valNetOutBaseline.textContent = formatBytes(netOutAvg);
+    const valNetOutRatio = el("valNetOutRatio");
+    if (valNetOutRatio) valNetOutRatio.textContent = netOutRatio.toFixed(1) + "x";
+
     // Update per-chart live value labels
     el("liveCPU") && (el("liveCPU").textContent = metric.cpu.toFixed(1) + "%");
     el("liveRAM") && (el("liveRAM").textContent = metric.ram.toFixed(1) + "%");
@@ -223,11 +240,35 @@ function updateStatusBadge(statusData) {
     if (!statusData || !badge) return;
 
     const s = (statusData.status || "normal").toLowerCase();
-    badge.className = `status-badge ${s}`;
-    text.textContent = s.charAt(0).toUpperCase() + s.slice(1);
+    const sev = statusData.severity;
+
+    if (s === "anomaly" && sev) {
+        const sevClass = sev.toLowerCase().replace(/\s+/g, "-");
+        badge.className = `status-badge anomaly ${sevClass}`;
+        text.textContent = sev.toUpperCase();
+    } else {
+        badge.className = `status-badge normal`;
+        text.textContent = "NORMAL";
+    }
 
     if (ts && statusData.last_updated)
         ts.textContent = "Updated: " + formatTime(statusData.last_updated);
+
+    // Sync network baseline & ratio from statusData if available
+    const netInAvg = statusData.net_in_5min_avg !== undefined ? statusData.net_in_5min_avg : 0.0;
+    const netInRatio = statusData.network_in_ratio !== undefined ? statusData.network_in_ratio : 1.0;
+    const netOutAvg = statusData.net_out_5min_avg !== undefined ? statusData.net_out_5min_avg : 0.0;
+    const netOutRatio = statusData.network_out_ratio !== undefined ? statusData.network_out_ratio : 1.0;
+
+    const valNetInBaseline = el("valNetInBaseline");
+    if (valNetInBaseline && netInAvg > 0) valNetInBaseline.textContent = formatBytes(netInAvg);
+    const valNetInRatio = el("valNetInRatio");
+    if (valNetInRatio) valNetInRatio.textContent = netInRatio.toFixed(1) + "x";
+
+    const valNetOutBaseline = el("valNetOutBaseline");
+    if (valNetOutBaseline && netOutAvg > 0) valNetOutBaseline.textContent = formatBytes(netOutAvg);
+    const valNetOutRatio = el("valNetOutRatio");
+    if (valNetOutRatio) valNetOutRatio.textContent = netOutRatio.toFixed(1) + "x";
 
     // Flash body on anomaly
     if (s === "anomaly") {

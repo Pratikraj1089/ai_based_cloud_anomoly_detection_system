@@ -125,6 +125,8 @@ def init_db() -> None:
             _safe_add_column(conn, "anomalies",  "server_id",      "INTEGER")
             _safe_add_column(conn, "anomalies",  "reasons",        "TEXT", "'[]'")
             _safe_add_column(conn, "anomalies",  "probable_cause", "TEXT", "''")
+            _safe_add_column(conn, "anomalies",  "network_in_ratio", "REAL", "0.0")
+            _safe_add_column(conn, "anomalies",  "network_out_ratio", "REAL", "0.0")
             _safe_add_column(conn, "alerts",     "server_id",      "INTEGER")
             _safe_add_column(conn, "alerts",     "channel",        "TEXT", "'console'")
             _safe_add_column(conn, "alerts",     "recipient",      "TEXT", "''")
@@ -261,23 +263,28 @@ def count_metrics(server_id: int = None) -> int:
 
 def insert_anomaly(metric_data: dict, score: float, severity: str,
                    server_id: int = None, reasons: list = None,
-                   probable_cause: str = "") -> int:
+                   probable_cause: str = "", network_in_ratio: float = 0.0,
+                   network_out_ratio: float = 0.0) -> int:
     """Log a detected anomaly with optional explanation fields."""
     sql = """
     INSERT INTO anomalies (timestamp, metric_values, anomaly_score, severity,
-                           server_id, reasons, probable_cause)
+                           server_id, reasons, probable_cause,
+                           network_in_ratio, network_out_ratio)
     VALUES (datetime('now'), :metric_values, :score, :severity,
-            :server_id, :reasons, :probable_cause)
+            :server_id, :reasons, :probable_cause,
+            :network_in_ratio, :network_out_ratio)
     """
     try:
         with get_connection() as conn:
             return conn.execute(sql, {
-                "metric_values":  json.dumps(metric_data),
-                "score":          score,
-                "severity":       severity,
-                "server_id":      server_id,
-                "reasons":        json.dumps(reasons or []),
-                "probable_cause": probable_cause or "",
+                "metric_values":      json.dumps(metric_data),
+                "score":              score,
+                "severity":           severity,
+                "server_id":          server_id,
+                "reasons":            json.dumps(reasons or []),
+                "probable_cause":     probable_cause or "",
+                "network_in_ratio":   network_in_ratio,
+                "network_out_ratio":  network_out_ratio,
             }).lastrowid
     except Exception as exc:
         logger.exception("insert_anomaly failed: %s", exc)

@@ -36,6 +36,8 @@ from config import (
     CPU_MODERATE, CPU_HIGH, CPU_DANGER,
     RAM_MODERATE, RAM_HIGH, RAM_DANGER,
     LOAD_MODERATE, LOAD_HIGH, LOAD_DANGER,
+    IFOREST_MODERATE_THRESHOLD, IFOREST_HIGH_THRESHOLD, IFOREST_DANGER_THRESHOLD,
+    NET_MIN_SAFE_BASELINE, NET_SPIKE_MODERATE, NET_SPIKE_HIGH, NET_SPIKE_DANGER,
 )
 
 
@@ -92,43 +94,94 @@ def classify_vps_situation(
     load_avg_1m: float,
     cpu_cores: int,
     ai_score: float,
+    network_in: float = 0.0,
+    network_out: float = 0.0,
+    net_in_5min_avg: float = 0.0,
+    net_out_5min_avg: float = 0.0,
 ) -> str:
     """
     Determine the final system state using a hybrid approach:
-      - Hard thresholds (configurable via .env) are checked first
-      - AI anomaly score acts as a fallback "sneaky anomaly" detector
-
-    The AI fallback catches situations where hardware metrics look fine
-    but the overall statistical pattern is unusual (e.g. service crash
-    causing both CPU and process count to drop simultaneously).
+      - Hard static thresholds (CPU, RAM, Load) are checked first.
+      - Network anomalies are checked via baseline ratios, falling back to absolute MB/s limits.
+      - AI anomaly score (Isolation Forest) mapping provides severity-aware fallback levels.
 
     Args:
-        cpu         : CPU utilisation % (0–100)
-        ram         : RAM utilisation % (0–100)
-        load_avg_1m : 1-minute system load average
-        cpu_cores   : number of logical CPU cores
-        ai_score    : Isolation Forest score_samples() value
+        cpu              : CPU utilisation % (0–100)
+        ram              : RAM utilisation % (0–100)
+        load_avg_1m      : 1-minute system load average
+        cpu_cores        : number of logical CPU cores
+        ai_score         : Isolation Forest score_samples() value
+        network_in       : Current inbound network rate (B/s)
+        network_out      : Current outbound network rate (B/s)
+        net_in_5min_avg  : 5-minute rolling average of inbound network rate (B/s)
+        net_out_5min_avg : 5-minute rolling average of outbound network rate (B/s)
 
     Returns:
         One of: "Normal", "Moderate Anomaly", "High Anomaly", "Danger"
     """
     load_ratio = load_avg_1m / cpu_cores if cpu_cores > 0 else 0.0
 
-    # Danger / Critical
+    # 1. Determine severity based on CPU, RAM, and System Load
+    static_severity = "Normal"
     if cpu >= CPU_DANGER or load_ratio >= LOAD_DANGER or ram >= RAM_DANGER:
-        return "Danger"
+        static_severity = "Danger"
+    elif cpu >= CPU_HIGH or load_ratio >= LOAD_HIGH or ram >= RAM_HIGH:
+        static_severity = "High Anomaly"
+    elif cpu >= CPU_MODERATE or load_ratio >= LOAD_MODERATE or ram >= RAM_MODERATE:
+        static_severity = "Moderate Anomaly"
 
-    # High Anomaly
-    if cpu >= CPU_HIGH or load_ratio >= LOAD_HIGH or ram >= RAM_HIGH:
-        return "High Anomaly"
+    # 2. Determine severity based on Isolation Forest AI Score
+    ai_severity = "Normal"
+    if ai_score <= IFOREST_DANGER_THRESHOLD:
+        ai_severity = "Danger"
+    elif ai_score <= IFOREST_HIGH_THRESHOLD:
+        ai_severity = "High Anomaly"
+    elif ai_score <= IFOREST_MODERATE_THRESHOLD:
+        ai_severity = "Moderate Anomaly"
 
-    # Moderate Anomaly
-    if cpu >= CPU_MODERATE or load_ratio >= LOAD_MODERATE or ram >= RAM_MODERATE:
-        return "Moderate Anomaly"
+    # 3. Determine severity based on Network Inbound Traffic
+    in_ratio = network_in / max(net_in_5min_avg, NET_MIN_SAFE_BASELINE)
+    in_severity = "Normal"
+    if in_ratio >= 8.0:
+        in_severity = "Danger"
+    elif in_ratio >= 4.0:
+        in_severity = "High Anomaly"
+    elif in_ratio >= 2.0:
+        in_severity = "Moderate Anomaly"
 
-    # AI Anomaly Fallback — catches "sneaky" anomalies:
-    # e.g. CPU at 5% but process count collapsed, which the IF model flags
-    if ai_score <= -0.75:
-        return "Moderate Anomaly"
+    # Absolute fallback check for Inbound
+    if in_severity == "Normal":
+        if network_in >= NET_SPIKE_DANGER:
+            in_severity = "Danger"
+        elif network_in >= NET_SPIKE_HIGH:
+            in_severity = "High Anomaly"
+        elif network_in >= NET_SPIKE_MODERATE:
+            in_severity = "Moderate Anomaly"
 
-    return "Normal"
+    # 4. Determine severity based on Network Outbound Traffic
+    out_ratio = network_out / max(net_out_5min_avg, NET_MIN_SAFE_BASELINE)
+    out_severity = "Normal"
+    if out_ratio >= 8.0:
+        out_severity = "Danger"
+    elif out_ratio >= 4.0:
+        out_severity = "High Anomaly"
+    elif out_ratio >= 2.0:
+        out_severity = "Moderate Anomaly"
+
+    # Absolute fallback check for Outbound
+    if out_severity == "Normal":
+        if network_out >= NET_SPIKE_DANGER:
+            out_severity = "Danger"
+        elif network_out >= NET_SPIKE_HIGH:
+            out_severity = "High Anomaly"
+        elif network_out >= NET_SPIKE_MODERATE:
+            out_severity = "Moderate Anomaly"
+
+    # Combine all severities and return the maximum active severity
+    severity_order = {"Normal": 0, "Moderate Anomaly": 1, "High Anomaly": 2, "Danger": 3}
+    final_severity = "Normal"
+    for sev in (static_severity, ai_severity, in_severity, out_severity):
+        if severity_order[sev] > severity_order[final_severity]:
+            final_severity = sev
+
+    return final_severity

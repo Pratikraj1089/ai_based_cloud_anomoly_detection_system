@@ -32,8 +32,8 @@ class _TrendEngine:
         f = {'cpu_delta':0.0,'ram_delta':0.0,'disk_delta':0.0,'process_delta':0.0,
              'net_in_delta':0.0,'net_out_delta':0.0,
              'cpu_5min_avg':cpu,'ram_5min_avg':ram,'net_in_5min_avg':ni,'proc_5min_avg':pr}
-        if not buf: return f
-        p = buf[-1]
+        if len(buf) < 2: return f
+        p = buf[-2] # since current is already pushed at buf[-1]
         f['cpu_delta']=cpu-p['cpu']; f['ram_delta']=ram-p['ram']
         f['disk_delta']=float(current.get('disk',0))-p['disk']
         f['process_delta']=pr-p['processes']

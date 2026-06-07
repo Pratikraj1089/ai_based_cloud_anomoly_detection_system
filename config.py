@@ -66,6 +66,14 @@ THRESHOLD_LOW    = -0.1   # score < this → Low anomaly
 THRESHOLD_MEDIUM = -0.3   # score < this → Medium anomaly
 THRESHOLD_HIGH   = -0.5   # score < this → High anomaly
 
+IFOREST_MODERATE_THRESHOLD = float(os.getenv("IFOREST_MODERATE_THRESHOLD", -0.25))
+IFOREST_HIGH_THRESHOLD     = float(os.getenv("IFOREST_HIGH_THRESHOLD", -0.50))
+IFOREST_DANGER_THRESHOLD   = float(os.getenv("IFOREST_DANGER_THRESHOLD", -0.75))
+
+# ─── Baseline Network Detection Safety Floor ──────────────────────────────────
+NET_MIN_SAFE_BASELINE      = float(os.getenv("NET_MIN_SAFE_BASELINE", 102400.0))  # default 100 KB/s
+
+
 # ─── Custom Hardware Thresholds ──────────────────────────────────────────────
 CPU_MODERATE       = float(os.getenv("CPU_MODERATE", 70.0))
 CPU_HIGH           = float(os.getenv("CPU_HIGH", 85.0))

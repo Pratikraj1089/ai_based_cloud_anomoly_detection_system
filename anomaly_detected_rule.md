@@ -49,9 +49,14 @@ The hybrid pipeline evaluates these static thresholds to determine severity and 
 * **$\ge$ 70% Disk**: Flagged as `Disk filling`.
 
 ### E. Network Rate Spike Rules (Inbound / Outbound)
-* **$\ge$ 50 MB/s**: Flagged as `Extreme inbound / outbound (possible DDoS / Exfiltration)`.
-* **$\ge$ 20 MB/s**: Flagged as `Very high inbound / outbound`.
-* **$\ge$ 5 MB/s**: Flagged as `Elevated inbound / outbound`.
+The system calculates the network deviation ratio relative to the 5-minute rolling baseline floor $\text{ratio} = \frac{\text{current\_rate}}{\max(\text{baseline}, \text{safe\_floor})}$ (where `NET_MIN_SAFE_BASELINE = 100 KB/s` is the safe floor).
+* **$\ge$ 8.0x Ratio**: `Danger` severity (`Extreme inbound/outbound traffic`).
+* **$\ge$ 4.0x Ratio**: `High Anomaly` severity (`Very high inbound/outbound traffic`).
+* **$\ge$ 2.0x Ratio**: `Moderate Anomaly` severity (`Elevated inbound/outbound traffic`).
+* **Absolute Fallbacks**:
+  * **$\ge$ 50 MB/s**: `Danger` severity.
+  * **$\ge$ 20 MB/s**: `High Anomaly` severity.
+  * **$\ge$ 5 MB/s**: `Moderate Anomaly` severity.
 
 ### F. Running Process Drop Rules (Possible Crashes)
 * **$\ge$ 30 Process Drop (1 poll)**: Flagged as `Severe process drop`.
@@ -65,4 +70,9 @@ The hybrid pipeline evaluates these static thresholds to determine severity and 
 If none of the hard static thresholds above are breached, the **Isolation Forest** model evaluates the multi-dimensional feature vector. 
 
 * **Feature Vector**: CPU Distance, RAM Distance, Disk, Network In, Network Out, Processes, Uptime, CPU Delta, RAM Delta, Disk Delta, Process Delta, Net In Delta, Net Out Delta, CPU 5m Avg, RAM 5m Avg, Net In 5m Avg, and Process 5m Avg.
-* **AI Anomaly Fallback**: If the overall Isolation Forest statistical score is **$\le$ -0.75**, the pipeline automatically flags it as a **Moderate Anomaly** (`AI detected rare system state`). This catches "sneaky" anomalies (e.g., a simultaneous drop in both CPU usage and running processes due to service crash).
+* **AI Severity-Aware Scoring**:
+  * **Score $\le$ -0.85**: `Danger` severity.
+  * **Score $\le$ -0.70**: `High Anomaly` severity.
+  * **Score $\le$ -0.55**: `Moderate Anomaly` severity.
+  * *Scores > -0.55 are treated as `Normal`.*
+
